@@ -14,11 +14,10 @@ from scipy.signal import argrelextrema
 # 設定 Log
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 從 GitHub Secrets 環境變數安全地讀取帳號密碼
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# 自動剝除可能在 GitHub Secrets 不小心貼到的多餘空白標籤
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# 建立共用的 requests session
 session = requests.Session()
 session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -34,7 +33,7 @@ ASSETS = {
     "🇨🇳 中國股市 (上證)": "000001.SS",
     "🟡 貴金屬 (黃金)": "GC=F",
     "⚪ 貴金屬 (白銀)": "SI=F",
-    "📈 美債 ETF (20年+)": "TLT",
+    "📈 美債 ETF (TLT)": "TLT",
     "🪙 比特幣 (BTC)": "BTC-USD",
     "💵 美元指數": "DX-Y.NYB"
 }
@@ -47,25 +46,25 @@ def get_macro_data():
         nfci = web.DataReader('NFCI', 'fred')
         nfci_val = round(nfci.iloc[-1][0], 2)
         status = "🔴 資金偏緊縮 (壓力大)" if nfci_val > 0 else "🟢 資金流動性健康 (寬鬆)"
-        macro_info.append(f"- 🏦 <b>聯儲金融狀況指數 (NFCI)</b>: {nfci_val} ({status})")
+        macro_info.append(f"- 🏦 聯儲金融狀況指數 (NFCI): {nfci_val} ({status})")
     except Exception as e:
-        macro_info.append("- 🏦 <b>聯儲金融狀況指數 (NFCI)</b>: 擷取失敗")
+        macro_info.append("- 🏦 聯儲金融狀況指數 (NFCI): 擷取失敗")
 
     try:
         t10y2y = web.DataReader('T10Y2Y', 'fred')
         spread = round(t10y2y.iloc[-1][0], 2)
-        status = "⚠️ <b>殖利率倒掛中 (衰退警訊)</b>" if spread < 0 else "✅ 正常斜率 (低衰退疑慮)"
-        macro_info.append(f"- 📉 <b>美債 10Y-2Y 利差</b>: {spread}% [{status}]")
+        status = "⚠️ 殖利率倒掛中 (衰退警訊)" if spread < 0 else "✅ 正常斜率 (低衰退疑慮)"
+        macro_info.append(f"- 📉 美債 10Y-2Y 利差: {spread}% [{status}]")
     except Exception as e:
-        macro_info.append("- 📉 <b>美債 10Y-2Y 利差</b>: 擷取失敗")
+        macro_info.append("- 📉 美債 10Y-2Y 利差: 擷取失敗")
 
     try:
         sahm = web.DataReader('SAHMREALTIME', 'fred')
         sahm_val = round(sahm.iloc[-1][0], 2)
-        status = "⚠️ <b>觸發衰退警戒 (失業率飆升)</b>" if sahm_val >= 0.5 else "✅ 就業市場尚穩"
-        macro_info.append(f"- 👥 <b>薩姆規則衰退指標</b>: {sahm_val} [{status}]")
+        status = "⚠️ 觸發衰退警戒 (失業率飆升)" if sahm_val >= 0.5 else "✅ 就業市場尚穩"
+        macro_info.append(f"- 👥 薩姆規則衰退指標: {sahm_val} [{status}]")
     except Exception as e:
-        macro_info.append("- 👥 <b>薩姆規則衰退指標</b>: 擷取失敗")
+        macro_info.append("- 👥 薩姆規則衰退指標: 擷取失敗")
 
     try:
         spy = yf.Ticker("SPY")
@@ -75,9 +74,9 @@ def get_macro_data():
         
         erp = round((1 / pe) * 100 - dgs10, 2)
         status = "🔴 股市無超額報酬 (風險過高/估值貴)" if erp < 0 else ("✅ 股市風險溢酬佳" if erp >= 2 else "⚪ 估值偏高區間")
-        macro_info.append(f"- ⚖️ <b>標普股票風險溢酬 (ERP)</b>: {erp}% [{status}]")
+        macro_info.append(f"- ⚖️ 標普股票風險溢酬 (ERP): {erp}% [{status}]")
     except Exception as e:
-        macro_info.append(f"- ⚖️ <b>標普股票風險溢酬 (ERP)</b>: 擷取失敗")
+        macro_info.append(f"- ⚖️ 標普股票風險溢酬 (ERP): 擷取失敗")
 
     return macro_info
 
@@ -162,9 +161,9 @@ def get_market_data():
                 sp500_rsi = rsi
                 if not pd.isna(ma200):
                     if current_price > (ma200 * 1.04):
-                        special_signal = "\n   🔔 <b>[長線多訊]</b> 突破200MA之上 4% 🚀"
+                        special_signal = "\n   🔔 [長線多訊] 突破200MA之上 4% 🚀"
                     elif current_price < (ma200 * 0.97):
-                        special_signal = "\n   ⚠️ <b>[長線空訊]</b> 跌破200MA之下 3% 📉"
+                        special_signal = "\n   ⚠️ [長線空訊] 跌破200MA之下 3% 📉"
 
             upper_bb = ma20 + (2 * std20)
             lower_bb = ma20 - (2 * std20)
@@ -213,7 +212,6 @@ def get_bottom_signals(sp500_rsi):
     signals = []
     triggered_count = 0
     
-    # 全部換成中文避免被 Telegram 當成網頁語法
     try:
         r = session.get('https://production.dataviz.cnn.io/index/fearandgreed/graphdata', timeout=10)
         fgi = round(r.json().get('fear_and_greed', {}).get('score', 50))
@@ -235,9 +233,9 @@ def get_bottom_signals(sp500_rsi):
         rsi_val = round(sp500_rsi, 1)
         status = "🔴 達標" if rsi_val < 30 else "⚪ 未達"
         if rsi_val < 30: triggered_count += 1
-        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻小於30 [{status}]")
+        signals.append(f"3. 標普大盤 RSI: {rsi_val} / 門檻小於30 [{status}]")
     else:
-        signals.append("3. 標普大盤 RSI : 資料不足")
+        signals.append("3. 標普大盤 RSI: 資料不足")
 
     pcr = scrape_put_call_ratio()
     if pcr is not None:
@@ -251,36 +249,36 @@ def get_bottom_signals(sp500_rsi):
 
 def format_telegram_message(market_data, macro_data, bottom_signals, trigger_count):
     today = datetime.now().strftime("%Y-%m-%d")
-    msg = f"📊 <b>【全球量化經理人】每日總經早報 ({today})</b>\n\n"
+    msg = f"📊 【全球量化經理人】每日總經早報 ({today})\n\n"
     
-    msg += "<b>🌍 =【總經宏觀環境】=</b>\n"
+    msg += "🌍 =【總經宏觀環境】=\n"
     for item in macro_data:
         msg += f"{item}\n"
     msg += "\n"
 
-    msg += "<b>🛡️ =【四大抄底監控】=</b>\n"
+    msg += "🛡️ =【四大抄底監控】=\n"
     if trigger_count >= 2:
-        msg += "🚨🚨 <b>【強烈抄底訊號提醒】</b> 🚨🚨\n"
-        msg += f"<i>目前已有 {trigger_count} 項極端指標觸底！請開始關注進場點！</i>\n"
+        msg += "🚨🚨 【強烈抄底訊號提醒】 🚨🚨\n"
+        msg += f"目前已有 {trigger_count} 項極端指標觸底！請開始關注進場點！\n"
     elif trigger_count == 1:
-        msg += "🚨 <b>【抄底訊號發酵中】</b> (1項達標)\n"
+        msg += "🚨 【抄底訊號發酵中】 (1項達標)\n"
     else:
-        msg += "<i>目前處於平靜區間，未見極端超賣。</i>\n"
+        msg += "目前處於平靜區間，未見極端超賣。\n"
         
     for sig in bottom_signals:
         msg += f"- {sig}\n"
     msg += "\n"
 
-    msg += "<b>🎯 =【全球核心板塊巡禮】=</b>\n"
+    msg += "🎯 =【全球核心板塊巡禮】=\n"
     for item in market_data:
-        msg += f"<b>{item['名稱']}</b> ({item['代碼']})\n"
+        msg += f"★ {item['名稱']} ({item['代碼']})\n"
         msg += f"   ➤ 價格: {item['目前價格']} ({item['漲跌幅']})\n"
         msg += f"   ➤ 趨勢: {item['趨勢']}\n"
         msg += f"   ➤ 動能: {item['動能']}\n"
         msg += f"   ➤ 型態: {item['型態']}\n"
         msg += f"   ---\n"
         
-    msg += "<i>💡 提示: 中長線投資首重總經，機器人波段判讀僅為技術面輔助。</i>"
+    msg += "💡 提示: 中長線投資首重總經，機器人波段判讀僅為技術面輔助。"
     return msg
 
 def send_telegram_message(bot_token, chat_id, message):
@@ -288,17 +286,20 @@ def send_telegram_message(bot_token, chat_id, message):
         return
         
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    
+    # 關閉易碎的網頁模式，直接純文字火力全開硬發
     payload = {
         "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "text": message
     }
+    
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
+        logging.info("⭐ 發射成功！手機保證已響鈴！")
     except Exception as e:
-        print(f"ERROR: {e}")
+        error_msg = response.text if response else str(e)
+        logging.error(f"連純文字都發送失敗，代表「密碼」或「群組ID」完全失效!\n🚨 詳細錯誤: {error_msg}")
 
 def main():
     macro_data = get_macro_data()
@@ -313,9 +314,13 @@ def main():
                 status = "🟢 黃金極端便宜 (強烈買入區)"
             else:
                 status = "⚪ 處於歷史合理區間"
-            macro_data.append(f"- 🪙 <b>貴金屬 金銀比 (GSR)</b>: {gs_ratio:.2f} [{status}]")
+            macro_data.append(f"- 🪙 貴金屬 金銀比 (GSR): {gs_ratio:.2f} [{status}]")
         except:
             pass
 
     bottom_signals, trigger_count = get_bottom_signals(sp500_rsi)
-    msg = format_telegram
+    msg = format_telegram_message(market_data, macro_data, bottom_signals, trigger_count)
+    send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
+
+if __name__ == "__main__":
+    main()
