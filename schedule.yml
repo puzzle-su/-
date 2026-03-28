@@ -1,0 +1,30 @@
+name: Quant Bot Daily Report
+
+on:
+  schedule:
+    # 每天 UTC 時間 00:00 執行 (等於台灣時間早上 08:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 允許使用網頁介面隨時手動點擊執行按鈕進行測試
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取得最新程式碼
+        uses: actions/checkout@v4
+      
+      - name: 在雲端建立乾淨的 Python 3.10 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: 安裝所有金融與分析套件 (yfinance, pandas 等)
+        run: pip install -r requirements.txt
+        
+      - name: 🚀 發射！執行量化機器人發報程式
+        env:
+          # 從您綁定在 GitHub 的安全保險箱抓取密碼
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
