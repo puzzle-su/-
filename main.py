@@ -25,7 +25,7 @@ session.headers.update({
 })
 
 ASSETS = {
-    "🇺🇸 美股大盤 (S&P500)": "^GSPC",
+    "🇺🇸 美股大盤 (標普500)": "^GSPC",
     "🇺🇸 科技大盤 (Nasdaq)": "^IXIC",
     "💡 半導體 (費半)": "^SOX",
     "🇹🇼 台股大盤": "^TWII",
