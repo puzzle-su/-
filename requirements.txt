@@ -1,0 +1,7 @@
+pandas
+yfinance
+feedparser
+requests
+beautifulsoup4
+scipy
+pandas-datareader
