@@ -11,22 +11,19 @@ from bs4 import BeautifulSoup
 import pandas_datareader.data as web
 from scipy.signal import argrelextrema
 
-# 設定 Log，方便我們追蹤程式運作狀態
+# 設定 Log
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 從 GitHub Secrets 環境變數安全地讀取帳號密碼
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "") # 測試環境允許為空
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# 建立共用的 requests session 加上 headers 以避免被阻擋
+# 建立共用的 requests session
 session = requests.Session()
 session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 })
 
-# ==========================================
-# 1. 定義要追蹤的投資標的 (擴充版)
-# ==========================================
 ASSETS = {
     "🇺🇸 美股大盤 (S&P500)": "^GSPC",
     "🇺🇸 科技大盤 (Nasdaq)": "^IXIC",
@@ -42,15 +39,10 @@ ASSETS = {
     "💵 美元指數": "DX-Y.NYB"
 }
 
-# ==========================================
-# 2. 總經數據擷取 (FRED)
-# ==========================================
 def get_macro_data():
-    """透過 FRED 取得芝加哥聯儲金融狀況指數與公債殖利率倒掛等總經數據"""
     logging.info("正在擷取總經數據 (Macro Data)...")
     macro_info = []
     
-    # 1. 芝加哥聯儲國家金融狀況指數 (NFCI)
     try:
         nfci = web.DataReader('NFCI', 'fred')
         nfci_val = round(nfci.iloc[-1][0], 2)
@@ -59,7 +51,6 @@ def get_macro_data():
     except Exception as e:
         macro_info.append("- 🏦 <b>聯儲金融狀況指數 (NFCI)</b>: 擷取失敗")
 
-    # 2. 10年期-2年期 公債殖利率利差 (T10Y2Y)
     try:
         t10y2y = web.DataReader('T10Y2Y', 'fred')
         spread = round(t10y2y.iloc[-1][0], 2)
@@ -68,7 +59,6 @@ def get_macro_data():
     except Exception as e:
         macro_info.append("- 📉 <b>美債 10Y-2Y 利差</b>: 擷取失敗")
 
-    # 3. 薩姆規則衰退指標 (Sahm Rule)
     try:
         sahm = web.DataReader('SAHMREALTIME', 'fred')
         sahm_val = round(sahm.iloc[-1][0], 2)
@@ -77,7 +67,6 @@ def get_macro_data():
     except Exception as e:
         macro_info.append("- 👥 <b>薩姆規則衰退指標</b>: 擷取失敗")
 
-    # 4. 股票風險溢酬估測 (ERP) 
     try:
         spy = yf.Ticker("SPY")
         pe = spy.info.get("trailingPE", 25) 
@@ -92,9 +81,6 @@ def get_macro_data():
 
     return macro_info
 
-# ==========================================
-# 3. 核心量化與型態學分析 (Pattern & Wave)
-# ==========================================
 def calculate_rsi(data, window=14):
     delta = data['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -103,26 +89,19 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def analyze_patterns(hist_df):
-    """
-    分析 W底、M頭 與 波浪理論 (近60日)。
-    回傳一段型態文字描述。
-    """
     if len(hist_df) < 60:
         return "資料不足"
         
     prices = hist_df['Close'].tail(60).values
-    # 找轉折點 (order=3 代表兩邊各3天，約一週的極值)
     local_maxima = argrelextrema(prices, np.greater, order=3)[0]
     local_minima = argrelextrema(prices, np.less, order=3)[0]
     
     patterns = []
     if len(local_maxima) >= 2 and len(local_minima) >= 1:
         last_two_peaks = prices[local_maxima[-2:]]
-        # 如果最近兩個高點差距不到 2%，可能正在形成/確認 M 頭
         if abs(last_two_peaks[0] - last_two_peaks[1]) / last_two_peaks[0] < 0.02:
             patterns.append("⚠️ M頭雙頂疑慮")
             
-        # 簡單波浪：Higher Highs & Higher Lows
         if len(local_maxima) >= 3 and len(local_minima) >= 3:
             p1, p2, p3 = prices[local_maxima[-3:]]
             v1, v2, v3 = prices[local_minima[-3:]]
@@ -133,9 +112,7 @@ def analyze_patterns(hist_df):
 
     if len(local_minima) >= 2 and len(local_maxima) >= 1:
         last_two_valleys = prices[local_minima[-2:]]
-        # 如果最近兩個低點差距不到 2%
         if abs(last_two_valleys[0] - last_two_valleys[1]) / last_two_valleys[0] < 0.02:
-            # 必須且當前價格反彈超過 2% 確認
             if prices[-1] > last_two_valleys[1] * 1.02:
                patterns.append("🛡️ 強勢 W底成型")
             else:
@@ -147,7 +124,6 @@ def analyze_patterns(hist_df):
     return " / ".join(patterns)
 
 def get_market_data():
-    """取得報價、計算 200MA、型態學分析、大幅買賣超偵測"""
     results = []
     sp500_rsi = None
     gold_price = None
@@ -174,7 +150,6 @@ def get_market_data():
             rsi = hist['RSI'].iloc[-1]
             pct_change = ((current_price - prev_price) / prev_price) * 100
             
-            # 記錄金價與銀價做未來對沖計算
             if ticker == "GC=F":
                 gold_price = current_price
             elif ticker == "SI=F":
@@ -182,7 +157,6 @@ def get_market_data():
 
             trend = "🟢 多頭 (站上MA20)" if current_price > ma20 else "🔴 空頭 (跌破MA20)"
             
-            # S&P500 長線多空與保留給抄底訊號
             special_signal = ""
             if ticker == "^GSPC":
                 sp500_rsi = rsi
@@ -192,7 +166,6 @@ def get_market_data():
                     elif current_price < (ma200 * 0.97):
                         special_signal = "\n   ⚠️ <b>[長線空訊]</b> 跌破200MA之下 3% 📉"
 
-            # 大幅買超/賣超判定 (結合 RSI 與 布林通道上下軌)
             upper_bb = ma20 + (2 * std20)
             lower_bb = ma20 - (2 * std20)
             
@@ -207,7 +180,6 @@ def get_market_data():
             else:
                 momentum_text = "⚪ 中性"
             
-            # 執行 60 天期波浪與型態學分析
             pattern_txt = analyze_patterns(hist)
             
             results.append({
@@ -220,15 +192,11 @@ def get_market_data():
                 "型態": pattern_txt
             })
         except Exception as e:
-            logging.error(f"取得 {name} 資料失敗: {e}")
+            pass
             
     return results, sp500_rsi, gold_price, silver_price
 
-# ==========================================
-# 4. 抄底訊號模組 (Bottom-Fishing)
-# ==========================================
 def scrape_put_call_ratio():
-    """爬蟲取得 Put/Call Ratio"""
     try:
         url = "https://www.alphaquery.com/data/cboe-put-call-ratio"
         r = session.get(url, timeout=10)
@@ -245,59 +213,51 @@ def get_bottom_signals(sp500_rsi):
     signals = []
     triggered_count = 0
     
-    # 1. 恐懼與貪婪指數 < 10
+    # 全部換成中文避免被 Telegram 當成網頁語法
     try:
         r = session.get('https://production.dataviz.cnn.io/index/fearandgreed/graphdata', timeout=10)
         fgi = round(r.json().get('fear_and_greed', {}).get('score', 50))
         status = "🔴 達標" if fgi < 10 else "⚪ 未達"
         if fgi < 10: triggered_count += 1
-        signals.append(f"1. 恐懼貪婪指數: {fgi} / 門檻<10 [{status}]")
+        signals.append(f"1. 恐懼貪婪指數: {fgi} / 門檻小於10 [{status}]")
     except Exception:
         signals.append("1. 恐懼貪婪指數: 擷取失敗")
         
-    # 2. VIX 波動率指數 > 40
     try:
         vix = round(yf.Ticker("^VIX").history(period="1d")['Close'].iloc[-1], 2)
         status = "🔴 達標" if vix > 40 else "⚪ 未達"
         if vix > 40: triggered_count += 1
-        signals.append(f"2. VIX 恐慌指數: {vix} / 門檻>40 [{status}]")
+        signals.append(f"2. VIX 恐慌指數: {vix} / 門檻大於40 [{status}]")
     except Exception:
         signals.append("2. VIX 恐慌指數: 擷取失敗")
 
-    # 3. S&P 500 RSI (14日) < 30
     if sp500_rsi is not None:
         rsi_val = round(sp500_rsi, 1)
         status = "🔴 達標" if rsi_val < 30 else "⚪ 未達"
         if rsi_val < 30: triggered_count += 1
-        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻<30 [{status}]")
+        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻小於30 [{status}]")
     else:
         signals.append("3. 標普大盤 RSI : 資料不足")
 
-    # 4. Put/Call Ratio > 0.9
     pcr = scrape_put_call_ratio()
     if pcr is not None:
         status = "🔴 達標" if pcr > 0.9 else "⚪ 未達"
         if pcr > 0.9: triggered_count += 1
-        signals.append(f"4. Put/Call Ratio: {pcr:.2f} / 門檻>0.9 [{status}]")
+        signals.append(f"4. Put/Call Ratio: {pcr:.2f} / 門檻大於0.9 [{status}]")
     else:
-        signals.append("4. Put/Call Ratio: 擷取失敗 (請見諒免付費限制)")
+        signals.append("4. Put/Call Ratio: 擷取失敗 (免付費限制)")
 
     return signals, triggered_count
 
-# ==========================================
-# 5. Telegram 推播排版模組
-# ==========================================
 def format_telegram_message(market_data, macro_data, bottom_signals, trigger_count):
     today = datetime.now().strftime("%Y-%m-%d")
     msg = f"📊 <b>【全球量化經理人】每日總經早報 ({today})</b>\n\n"
     
-    # 總經板塊
     msg += "<b>🌍 =【總經宏觀環境】=</b>\n"
     for item in macro_data:
         msg += f"{item}\n"
     msg += "\n"
 
-    # 抄底訊號
     msg += "<b>🛡️ =【四大抄底監控】=</b>\n"
     if trigger_count >= 2:
         msg += "🚨🚨 <b>【強烈抄底訊號提醒】</b> 🚨🚨\n"
@@ -311,7 +271,6 @@ def format_telegram_message(market_data, macro_data, bottom_signals, trigger_cou
         msg += f"- {sig}\n"
     msg += "\n"
 
-    # 全球行情與型態
     msg += "<b>🎯 =【全球核心板塊巡禮】=</b>\n"
     for item in market_data:
         msg += f"<b>{item['名稱']}</b> ({item['代碼']})\n"
@@ -326,7 +285,6 @@ def format_telegram_message(market_data, macro_data, bottom_signals, trigger_cou
 
 def send_telegram_message(bot_token, chat_id, message):
     if not bot_token or not chat_id:
-        logging.warning("尚未設定 Bot Token 或 Chat ID，跳過發送並將內容印出於下方：\n" + message)
         return
         
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -336,29 +294,23 @@ def send_telegram_message(bot_token, chat_id, message):
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
-    
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
-        logging.info("✅ 成功發射到使用者的手機囉！")
     except Exception as e:
-        logging.error(f"發送 Telegram 訊息失敗: {e}")
+        print(f"ERROR: {e}")
 
-# ==========================================
-# 主程式進入點
-# ==========================================
 def main():
     macro_data = get_macro_data()
     market_data, sp500_rsi, gold_price, silver_price = get_market_data()
     
-    # 新增：金銀比估測模組 (整合進宏觀數據最後一項)
     if gold_price and silver_price:
         try:
             gs_ratio = gold_price / silver_price
             if gs_ratio > 80:
-                status = "🔴 白銀極端便宜 (白銀強烈買入區 / 黃金賣出區)"
+                status = "🔴 白銀極端便宜 (強烈買入區)"
             elif gs_ratio < 50:
-                status = "🟢 黃金極端便宜 (黃金強烈買入區 / 白銀賣出區)"
+                status = "🟢 黃金極端便宜 (強烈買入區)"
             else:
                 status = "⚪ 處於歷史合理區間"
             macro_data.append(f"- 🪙 <b>貴金屬 金銀比 (GSR)</b>: {gs_ratio:.2f} [{status}]")
@@ -366,8 +318,4 @@ def main():
             pass
 
     bottom_signals, trigger_count = get_bottom_signals(sp500_rsi)
-    msg = format_telegram_message(market_data, macro_data, bottom_signals, trigger_count)
-    send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
-
-if __name__ == "__main__":
-    main()
+    msg = format_telegram
