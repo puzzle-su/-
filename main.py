@@ -15,8 +15,8 @@ from scipy.signal import argrelextrema
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 從 GitHub Secrets 環境變數安全地讀取帳號密碼
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() 
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "") # 測試環境允許為空
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # 建立共用的 requests session 加上 headers 以避免被阻擋
 session = requests.Session()
@@ -45,38 +45,43 @@ ASSETS = {
 # 2. 總經數據擷取 (FRED)
 # ==========================================
 def get_macro_data():
+    """透過 FRED 取得芝加哥聯儲金融狀況指數與公債殖利率倒掛等總經數據"""
     logging.info("正在擷取總經數據 (Macro Data)...")
     macro_info = []
     
+    # 1. 芝加哥聯儲國家金融狀況指數 (NFCI)
     try:
         nfci = web.DataReader('NFCI', 'fred')
-        nfci_val = round(nfci.iloc[-1, 0], 2)
+        nfci_val = round(nfci.iloc[-1][0], 2)
         status = "🔴 資金偏緊縮 (壓力大)" if nfci_val > 0 else "🟢 資金流動性健康 (寬鬆)"
         macro_info.append(f"- 🏦 <b>聯儲金融狀況指數 (NFCI)</b>: {nfci_val} ({status})")
     except Exception as e:
         macro_info.append("- 🏦 <b>聯儲金融狀況指數 (NFCI)</b>: 擷取失敗")
 
+    # 2. 10年期-2年期 公債殖利率利差 (T10Y2Y)
     try:
         t10y2y = web.DataReader('T10Y2Y', 'fred')
-        spread = round(t10y2y.iloc[-1, 0], 2)
+        spread = round(t10y2y.iloc[-1][0], 2)
         status = "⚠️ <b>殖利率倒掛中 (衰退警訊)</b>" if spread < 0 else "✅ 正常斜率 (低衰退疑慮)"
         macro_info.append(f"- 📉 <b>美債 10Y-2Y 利差</b>: {spread}% [{status}]")
     except Exception as e:
         macro_info.append("- 📉 <b>美債 10Y-2Y 利差</b>: 擷取失敗")
 
+    # 3. 薩姆規則衰退指標 (Sahm Rule)
     try:
         sahm = web.DataReader('SAHMREALTIME', 'fred')
-        sahm_val = round(sahm.iloc[-1, 0], 2)
+        sahm_val = round(sahm.iloc[-1][0], 2)
         status = "⚠️ <b>觸發衰退警戒 (失業率飆升)</b>" if sahm_val >= 0.5 else "✅ 就業市場尚穩"
         macro_info.append(f"- 👥 <b>薩姆規則衰退指標</b>: {sahm_val} [{status}]")
     except Exception as e:
         macro_info.append("- 👥 <b>薩姆規則衰退指標</b>: 擷取失敗")
 
+    # 4. 股票風險溢酬估測 (ERP) 
     try:
         spy = yf.Ticker("SPY")
         pe = spy.info.get("trailingPE", 25) 
         dgs10_data = web.DataReader('DGS10', 'fred')
-        dgs10 = dgs10_data.dropna().iloc[-1, 0]
+        dgs10 = dgs10_data.dropna().iloc[-1][0]
         
         erp = round((1 / pe) * 100 - dgs10, 2)
         status = "🔴 股市無超額報酬 (風險過高/估值貴)" if erp < 0 else ("✅ 股市風險溢酬佳" if erp >= 2 else "⚪ 估值偏高區間")
@@ -145,14 +150,14 @@ def get_market_data():
             if hist.empty:
                 continue
             
-            # 1. 計算多天期均線 (20, 60, 200)
+            # 計算均線
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
             hist['MA60'] = hist['Close'].rolling(window=60).mean()
             hist['MA200'] = hist['Close'].rolling(window=200).mean()
             hist['STD20'] = hist['Close'].rolling(window=20).std()
             hist['RSI'] = calculate_rsi(hist)
 
-            # 2. 計算精準 KD 值 (9, 3, 3) 用於偵測交叉
+            # 計算 KD 值 (9, 3, 3)
             hist['Low_9'] = hist['Low'].rolling(window=9).min()
             hist['High_9'] = hist['High'].rolling(window=9).max()
             rsv = (hist['Close'] - hist['Low_9']) / (hist['High_9'] - hist['Low_9']) * 100
@@ -175,7 +180,7 @@ def get_market_data():
             elif ticker == "SI=F":
                 silver_price = current_price
 
-            # 3. 三均線多空排列判定
+            # 多空均線排列判定
             above_mas = []
             below_mas = []
             if current_price > ma20: above_mas.append("20MA")
@@ -196,8 +201,8 @@ def get_market_data():
                 bm_str = ",".join(below_mas) if below_mas else "無"
                 trend = f"🟡 震盪區間 (站上 {am_str} | 破 {bm_str})"
 
-            # 4. KD 黃金交叉或死亡交叉雷達
-            kd_signal = " (⚪ KD平行無交叉)"
+            # KD 交叉判定
+            kd_signal = ""
             if k_prev < d_prev and k_curr > d_curr:
                 if k_curr < 30:
                     kd_signal = " 💥 低檔KD黃金交叉(抄底)"
@@ -243,11 +248,89 @@ def get_market_data():
             
     return results, sp500_rsi, gold_price, silver_price
 
+def get_breadth_data():
+    logging.info("正在計算 S5FI 市場寬度指標...")
+    s5fi_val = None
+    
+    def get_wiki_tickers(url, col_name):
+        try:
+            r = session.get(url, timeout=10)
+            soup = BeautifulSoup(r.text, 'html.parser')
+            table = soup.find('table', {'class': 'wikitable'})
+            if not table: return []
+            
+            headers = [th.text.strip().lower() for th in table.find_all('th')]
+            col_idx = -1
+            for i, h in enumerate(headers):
+                if col_name.lower() in h:
+                    col_idx = i
+                    break
+            if col_idx == -1: return []
+            
+            tickers = []
+            for row in table.find_all('tr')[1:]:
+                cols = row.find_all(['td', 'th'])
+                if len(cols) > col_idx:
+                    tkr = cols[col_idx].text.strip().replace('.', '-')
+                    if tkr: tickers.append(tkr)
+            return tickers
+        except Exception as e:
+            logging.error(f"Failed to fetch tickers: {e}")
+            return []
+
+    # 計算 S5FI (標普500成分股中，站上50MA的比例)
+    sp500_tickers = get_wiki_tickers('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies', 'symbol')
+    if sp500_tickers:
+        try:
+            data = yf.download(sp500_tickers, period='6mo', threads=True, progress=False)
+            if 'Close' in data:
+                close_px = data['Close']
+                ma50 = close_px.rolling(window=50).mean()
+                latest_px = close_px.iloc[-1]
+                latest_ma50 = ma50.iloc[-1]
+                
+                above_50 = (latest_px > latest_ma50).sum()
+                total_valid = latest_px.notna().sum()
+                if total_valid > 0:
+                    s5fi_val = round((above_50 / total_valid) * 100, 2)
+        except Exception as e:
+            logging.error(f"S5FI Error: {e}")
+
+    return s5fi_val
+
+def get_pcr_5ma():
+    logging.info("正在計算 CBOE Put/Call Ratio 5日均線...")
+    url = "https://ycharts.com/indicators/cboe_equity_put_call_ratio"
+    try:
+        r = session.get(url, timeout=10)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        pcr_values = []
+        tables = soup.find_all('table', class_='table')
+        for table in tables:
+            headers = [th.text.strip().lower() for th in table.find_all('th')]
+            if 'date' in headers and 'value' in headers:
+                for row in table.find_all('tr')[1:]:
+                    cols = row.find_all('td')
+                    if len(cols) == 2:
+                        val_str = cols[1].text.strip()
+                        try:
+                            pcr_values.append(float(val_str))
+                        except:
+                            continue
+                if len(pcr_values) >= 5:
+                    break
+        if len(pcr_values) >= 5:
+            five_day_avg = sum(pcr_values[:5]) / 5.0
+            return round(five_day_avg, 2)
+    except Exception as e:
+        logging.error(f"Failed to fetch PCR: {e}")
+    return None
+
 # ==========================================
-# 4. 抄底訊號模組 (取代原本易斷線的爬蟲)
+# 4. 抄底訊號模組 (Bottom-Fishing)
 # ==========================================
-def get_bottom_signals(sp500_rsi):
-    logging.info("正在檢查四大抄底訊號...")
+def get_bottom_signals(sp500_rsi, s5fi_val, pcr_5ma):
+    logging.info("正在檢查抄底訊號...")
     signals = []
     triggered_count = 0
     
@@ -260,6 +343,7 @@ def get_bottom_signals(sp500_rsi):
     except Exception:
         signals.append("1. 恐懼貪婪指數: 擷取失敗")
         
+    # 2. VIX 波動率指數 > 40
     try:
         vix = round(yf.Ticker("^VIX").history(period="1d")['Close'].iloc[-1], 2)
         status = "🔴 達標" if vix > 40 else "⚪ 未達"
@@ -268,22 +352,30 @@ def get_bottom_signals(sp500_rsi):
     except Exception:
         signals.append("2. VIX 恐慌指數: 擷取失敗")
 
+    # 3. S&P 500 RSI (14日) < 30
     if sp500_rsi is not None:
         rsi_val = round(sp500_rsi, 1)
         status = "🔴 達標" if rsi_val < 30 else "⚪ 未達"
         if rsi_val < 30: triggered_count += 1
-        signals.append(f"3. 標普大盤 RSI: {rsi_val} / 門檻小於30 [{status}]")
+        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻小於30 [{status}]")
     else:
-        signals.append("3. 標普大盤 RSI: 資料不足")
+        signals.append("3. 標普大盤 RSI : 資料不足")
 
-    # 全新引入：終極保命符—VVIX 黑天鵝期權指數 (取代 Put/Call Ratio)
-    try:
-        vvix = round(yf.Ticker("^VVIX").history(period="1d")['Close'].iloc[-1], 2)
-        status = "🔴 達標" if vvix > 115 else "⚪ 未達"
-        if vvix > 115: triggered_count += 1
-        signals.append(f"4. VVIX 黑天鵝指數: {vvix} / 門檻大於115 [{status}]")
-    except Exception:
-        signals.append("4. VVIX 黑天鵝指數: 擷取失敗")
+    # 4. S5FI (標普 50MA 上方比例) < 10%
+    if s5fi_val is not None:
+        status = "🔴 達標" if s5fi_val < 10 else "⚪ 未達"
+        if s5fi_val < 10: triggered_count += 1
+        signals.append(f"4. 標普 50MA 上方健檢 (S5FI): {s5fi_val:.1f}% / 門檻小於10% [{status}]")
+    else:
+        signals.append("4. 標普 50MA 上方健檢 (S5FI): 擷取失敗")
+
+    # 5. CBOE Put/Call Ratio (5MA) > 0.9
+    if pcr_5ma is not None:
+        status = "🔴 達標" if pcr_5ma > 0.9 else "⚪ 未達"
+        if pcr_5ma > 0.9: triggered_count += 1
+        signals.append(f"5. Put/Call Ratio 5MA: {pcr_5ma:.2f} / 門檻大於0.9 [{status}]")
+    else:
+        signals.append("5. Put/Call Ratio 5MA: 擷取失敗")
 
     return signals, triggered_count
 
@@ -301,8 +393,11 @@ def format_telegram_message(market_data, macro_data, bottom_signals, trigger_cou
     msg += "\n"
 
     # 抄底訊號
-    msg += "<b>🛡️ =【四大抄底監控】=</b>\n"
-    if trigger_count >= 2:
+    msg += "<b>🛡️ =【絕望抄底監控】=</b>\n"
+    if trigger_count >= 4:
+        msg += "🔥🔥🔥 <b>【極端超賣！歷史級別抄底機會】</b> 🔥🔥🔥\n"
+        msg += f"<i>目前已有 {trigger_count} 項極端指標觸底！強烈建議評估進場！</i>\n"
+    elif trigger_count >= 2:
         msg += "🚨🚨 <b>【強烈抄底訊號提醒】</b> 🚨🚨\n"
         msg += f"<i>目前已有 {trigger_count} 項極端指標觸底！請開始關注進場點！</i>\n"
     elif trigger_count == 1:
@@ -329,6 +424,7 @@ def format_telegram_message(market_data, macro_data, bottom_signals, trigger_cou
 
 def send_telegram_message(bot_token, chat_id, message):
     if not bot_token or not chat_id:
+        logging.warning("尚未設定 Bot Token 或 Chat ID，跳過發送並將內容印出於下方：\n" + message)
         return
         
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -344,17 +440,42 @@ def send_telegram_message(bot_token, chat_id, message):
         response.raise_for_status()
         logging.info("✅ 成功發射到使用者的手機囉！")
     except Exception as e:
-        error_msg = response.text if response else str(e)
-        logging.error(f"Telegram 解析失敗，可能是秘鑰或 ID 格式錯誤!\n詳細錯誤: {error_msg}")
+        logging.error(f"發送 Telegram 訊息失敗: {e}")
 
 # ==========================================
 # 主程式進入點
 # ==========================================
 def main():
+    # 判斷是否為獨立的盤中緊急監控模式
+    if len(sys.argv) > 1 and sys.argv[1] == '--emergency':
+        logging.info("執行盤中緊急監控模式...")
+        try:
+            hist = yf.Ticker("^GSPC").history(period="1mo")
+            hist['RSI'] = calculate_rsi(hist)
+            sp500_rsi = hist['RSI'].iloc[-1]
+        except:
+            sp500_rsi = None
+            
+        s5fi_val = get_breadth_data()
+        pcr_5ma = get_pcr_5ma()
+        bottom_signals, trigger_count = get_bottom_signals(sp500_rsi, s5fi_val, pcr_5ma)
+        
+        if trigger_count >= 4:
+            urgent_msg = "🚨🚨🚨 <b>【盤中緊急通知：極度恐慌拋售發生】</b> 🚨🚨🚨\n"
+            urgent_msg += f"目前抄底監控 5 項指標中，已有 <b>{trigger_count} 項</b> 達標！\n\n"
+            for sig in bottom_signals:
+                urgent_msg += f"{sig}\n"
+            urgent_msg += "\n此為極罕見的絕望超賣區域，請立即開啟看盤軟體評估進場！"
+            send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+        else:
+            logging.info(f"未達緊急標準，目前觸發數量: {trigger_count}，不發送通知。")
+        return
+
+    # 以下為原本的每日早報發送流程
     macro_data = get_macro_data()
     market_data, sp500_rsi, gold_price, silver_price = get_market_data()
     
-    # 金銀比估測模組
+    # 新增：金銀比估測模組 (整合進宏觀數據最後一項)
     if gold_price and silver_price:
         try:
             gs_ratio = gold_price / silver_price
@@ -368,8 +489,18 @@ def main():
         except:
             pass
 
-    bottom_signals, trigger_count = get_bottom_signals(sp500_rsi)
+    s5fi_val = get_breadth_data()
+    pcr_5ma = get_pcr_5ma()
+    bottom_signals, trigger_count = get_bottom_signals(sp500_rsi, s5fi_val, pcr_5ma)
     msg = format_telegram_message(market_data, macro_data, bottom_signals, trigger_count)
+    
+    # 判斷是否需要發送緊急獨立通知 (日報附帶)
+    if trigger_count >= 4:
+        urgent_msg = "🔥🔥🔥 <b>【緊急通知：極度恐慌拋售發生】</b> 🔥🔥🔥\n"
+        urgent_msg += f"目前抄底監控 5 項指標中，已有 <b>{trigger_count} 項</b> 達標！\n"
+        urgent_msg += "此為極罕見的絕望超賣區域，請立即評估進場！"
+        send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+
     send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
 
 if __name__ == "__main__":
