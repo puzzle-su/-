@@ -2,9 +2,8 @@ name: Emergency Bottom-Fishing Monitor
 
 on:
   schedule:
-    # 每天美國盤中時間 (台灣晚間 21:00 ~ 凌晨 05:00) 每 1 小時檢查一次
-    # UTC 時間: 13, 14, 15, 16, 17, 18, 19, 20, 21
-    - cron: '0 13-21 * * *'
+    # 全天候 24 小時，每 1 小時檢查追蹤一次
+    - cron: '0 * * * *'
   workflow_dispatch: # 允許手動點擊測試
 
 jobs:
