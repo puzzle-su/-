@@ -239,7 +239,7 @@ def get_market_data():
                 "代碼": ticker,
                 "目前價格": f"{current_price:.2f}",
                 "漲跌幅": f"{pct_change:+.2f}%",
-                "趨势": trend,
+                "趨勢": trend,
                 "指標": f"RSI: {rsi:.1f}{special_signal}",
                 "型態": pattern_txt
             })
