@@ -327,62 +327,93 @@ def get_pcr_5ma():
     return None
 
 # ==========================================
-# 4. 抄底訊號模組 (Bottom-Fishing)
+# 4. 極端訊號模組 (Extreme Signals)
 # ==========================================
-def get_bottom_signals(sp500_rsi, s5fi_val, pcr_5ma):
-    logging.info("正在檢查抄底訊號...")
+def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
+    logging.info("正在檢查極端情緒與指標訊號...")
     signals = []
-    triggered_count = 0
+    buy_count = 0
+    sell_count = 0
     
     try:
         r = session.get('https://production.dataviz.cnn.io/index/fearandgreed/graphdata', timeout=10)
         fgi = round(r.json().get('fear_and_greed', {}).get('score', 50))
-        status = "🔴 達標" if fgi < 10 else "⚪ 未達"
-        if fgi < 10: triggered_count += 1
-        signals.append(f"1. 恐懼貪婪指數: {fgi} / 門檻小於10 [{status}]")
+        if fgi < 10:
+            status = "🔴 超賣 (買入)"
+            buy_count += 1
+        elif fgi > 75:
+            status = "🟢 超買 (賣出)"
+            sell_count += 1
+        else:
+            status = "⚪ 中性"
+        signals.append(f"1. 恐懼貪婪指數: {fgi} / 門檻 <10 或 >75 [{status}]")
     except Exception:
         signals.append("1. 恐懼貪婪指數: 擷取失敗")
         
-    # 2. VIX 波動率指數 > 40
+    # 2. VIX 恐慌指數 > 40 或 < 15
     try:
         vix = round(yf.Ticker("^VIX").history(period="1d")['Close'].iloc[-1], 2)
-        status = "🔴 達標" if vix > 40 else "⚪ 未達"
-        if vix > 40: triggered_count += 1
-        signals.append(f"2. VIX 恐慌指數: {vix} / 門檻大於40 [{status}]")
+        if vix > 40:
+            status = "🔴 超賣 (買入)"
+            buy_count += 1
+        elif vix < 15:
+            status = "🟢 超買 (賣出)"
+            sell_count += 1
+        else:
+            status = "⚪ 中性"
+        signals.append(f"2. VIX 恐慌指數: {vix} / 門檻 >40 或 <15 [{status}]")
     except Exception:
         signals.append("2. VIX 恐慌指數: 擷取失敗")
 
-    # 3. S&P 500 RSI (14日) < 30
+    # 3. S&P 500 RSI (14日) < 30 或 > 70
     if sp500_rsi is not None:
         rsi_val = round(sp500_rsi, 1)
-        status = "🔴 達標" if rsi_val < 30 else "⚪ 未達"
-        if rsi_val < 30: triggered_count += 1
-        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻小於30 [{status}]")
+        if rsi_val < 30:
+            status = "🔴 超賣 (買入)"
+            buy_count += 1
+        elif rsi_val > 70:
+            status = "🟢 超買 (賣出)"
+            sell_count += 1
+        else:
+            status = "⚪ 中性"
+        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻 <30 或 >70 [{status}]")
     else:
         signals.append("3. 標普大盤 RSI : 資料不足")
 
-    # 4. S5FI (標普 50MA 上方比例) < 10%
+    # 4. S5FI (標普 50MA 上方比例) < 10% 或 > 85%
     if s5fi_val is not None:
-        status = "🔴 達標" if s5fi_val < 10 else "⚪ 未達"
-        if s5fi_val < 10: triggered_count += 1
-        signals.append(f"4. 標普 50MA 上方健檢 (S5FI): {s5fi_val:.1f}% / 門檻小於10% [{status}]")
+        if s5fi_val < 10:
+            status = "🔴 超賣 (買入)"
+            buy_count += 1
+        elif s5fi_val > 85:
+            status = "🟢 超買 (賣出)"
+            sell_count += 1
+        else:
+            status = "⚪ 中性"
+        signals.append(f"4. 標普 S5FI: {s5fi_val:.1f}% / 門檻 <10% 或 >85% [{status}]")
     else:
-        signals.append("4. 標普 50MA 上方健檢 (S5FI): 擷取失敗")
+        signals.append("4. 標普 S5FI: 擷取失敗")
 
-    # 5. CBOE Put/Call Ratio (5MA) > 0.9
+    # 5. CBOE Put/Call Ratio (5MA) > 0.9 或 < 0.7
     if pcr_5ma is not None:
-        status = "🔴 達標" if pcr_5ma > 0.9 else "⚪ 未達"
-        if pcr_5ma > 0.9: triggered_count += 1
-        signals.append(f"5. Put/Call Ratio 5MA: {pcr_5ma:.2f} / 門檻大於0.9 [{status}]")
+        if pcr_5ma > 0.9:
+            status = "🔴 超賣 (買入)"
+            buy_count += 1
+        elif pcr_5ma < 0.7:
+            status = "🟢 超買 (賣出)"
+            sell_count += 1
+        else:
+            status = "⚪ 中性"
+        signals.append(f"5. Put/Call Ratio 5MA: {pcr_5ma:.2f} / 門檻 >0.9 或 <0.7 [{status}]")
     else:
         signals.append("5. Put/Call Ratio 5MA: 擷取失敗")
 
-    return signals, triggered_count
+    return signals, buy_count, sell_count
 
 # ==========================================
 # 5. Telegram 推播排版模組
 # ==========================================
-def format_telegram_message(market_data, macro_data, bottom_signals, trigger_count):
+def format_telegram_message(market_data, macro_data, extreme_signals, buy_count, sell_count):
     today = datetime.now().strftime("%Y-%m-%d")
     msg = f"📊 <b>【全球量化經理人】每日總經早報 ({today})</b>\n\n"
     
@@ -392,20 +423,30 @@ def format_telegram_message(market_data, macro_data, bottom_signals, trigger_cou
         msg += f"{item}\n"
     msg += "\n"
 
-    # 抄底訊號
-    msg += "<b>🛡️ =【絕望抄底監控】=</b>\n"
-    if trigger_count >= 4:
+    # 極端指標訊號
+    msg += "<b>🛡️ =【極端市場訊號監控】=</b>\n"
+    if buy_count >= 4:
         msg += "🔥🔥🔥 <b>【極端超賣！歷史級別抄底機會】</b> 🔥🔥🔥\n"
-        msg += f"<i>目前已有 {trigger_count} 項極端指標觸底！強烈建議評估進場！</i>\n"
-    elif trigger_count >= 2:
+        msg += f"<i>目前已有 {buy_count} 項極端超賣指標觸底！強烈建議評估進場！</i>\n"
+    elif buy_count >= 2:
         msg += "🚨🚨 <b>【強烈抄底訊號提醒】</b> 🚨🚨\n"
-        msg += f"<i>目前已有 {trigger_count} 項極端指標觸底！請開始關注進場點！</i>\n"
-    elif trigger_count == 1:
+        msg += f"<i>目前已有 {buy_count} 項極端超賣指標觸底！請開始關注進場點！</i>\n"
+    elif buy_count == 1:
         msg += "🚨 <b>【抄底訊號發酵中】</b> (1項達標)\n"
-    else:
-        msg += "<i>目前處於平靜區間，未見極端超賣。</i>\n"
+
+    if sell_count >= 4:
+        msg += "💀💀💀 <b>【極端超買！泡沫崩盤風險大增】</b> 💀💀💀\n"
+        msg += f"<i>目前已有 {sell_count} 項極端超買指標達標！強烈建議減碼或避險！</i>\n"
+    elif sell_count >= 2:
+        msg += "⚠️⚠️ <b>【高檔過熱訊號提醒】</b> ⚠️⚠️\n"
+        msg += f"<i>目前已有 {sell_count} 項極端超買指標達標！注意追高風險！</i>\n"
+    elif sell_count == 1:
+        msg += "⚠️ <b>【過熱訊號發酵中】</b> (1項達標)\n"
         
-    for sig in bottom_signals:
+    if buy_count == 0 and sell_count == 0:
+        msg += "<i>目前處於平靜區間，未見極端市場情緒。</i>\n"
+        
+    for sig in extreme_signals:
         msg += f"- {sig}\n"
     msg += "\n"
 
@@ -458,17 +499,24 @@ def main():
             
         s5fi_val = get_breadth_data()
         pcr_5ma = get_pcr_5ma()
-        bottom_signals, trigger_count = get_bottom_signals(sp500_rsi, s5fi_val, pcr_5ma)
+        extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma)
         
-        if trigger_count >= 4:
-            urgent_msg = "🚨🚨🚨 <b>【盤中緊急通知：極度恐慌拋售發生】</b> 🚨🚨🚨\n"
-            urgent_msg += f"目前抄底監控 5 項指標中，已有 <b>{trigger_count} 項</b> 達標！\n\n"
-            for sig in bottom_signals:
+        if buy_count >= 1:
+            urgent_msg = "🚨🚨🚨 <b>【盤中緊急通知：極端超賣訊號觸發】</b> 🚨🚨🚨\n"
+            urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{buy_count} 項</b> 超賣達標！\n\n"
+            for sig in extreme_signals:
                 urgent_msg += f"{sig}\n"
-            urgent_msg += "\n此為極罕見的絕望超賣區域，請立即開啟看盤軟體評估進場！"
+            urgent_msg += "\n請立即開啟看盤軟體評估進場！"
+            send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+        elif sell_count >= 1:
+            urgent_msg = "💀💀💀 <b>【盤中緊急通知：極端超買訊號觸發】</b> 💀💀💀\n"
+            urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{sell_count} 項</b> 超買達標！\n\n"
+            for sig in extreme_signals:
+                urgent_msg += f"{sig}\n"
+            urgent_msg += "\n強烈建議留意風險、適度減碼或避險！"
             send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
         else:
-            logging.info(f"未達緊急標準，目前觸發數量: {trigger_count}，不發送通知。")
+            logging.info(f"未達緊急標準。買入達標: {buy_count}，賣出達標: {sell_count}")
         return
 
     # 以下為原本的每日早報發送流程
@@ -491,14 +539,19 @@ def main():
 
     s5fi_val = get_breadth_data()
     pcr_5ma = get_pcr_5ma()
-    bottom_signals, trigger_count = get_bottom_signals(sp500_rsi, s5fi_val, pcr_5ma)
-    msg = format_telegram_message(market_data, macro_data, bottom_signals, trigger_count)
+    extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma)
+    msg = format_telegram_message(market_data, macro_data, extreme_signals, buy_count, sell_count)
     
     # 判斷是否需要發送緊急獨立通知 (日報附帶)
-    if trigger_count >= 4:
-        urgent_msg = "🔥🔥🔥 <b>【緊急通知：極度恐慌拋售發生】</b> 🔥🔥🔥\n"
-        urgent_msg += f"目前抄底監控 5 項指標中，已有 <b>{trigger_count} 項</b> 達標！\n"
-        urgent_msg += "此為極罕見的絕望超賣區域，請立即評估進場！"
+    if buy_count >= 1:
+        urgent_msg = "🔥🔥🔥 <b>【緊急通知：極端超賣訊號觸發】</b> 🔥🔥🔥\n"
+        urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{buy_count} 項</b> 超賣達標！\n"
+        urgent_msg += "請立即評估進場機會！"
+        send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+    elif sell_count >= 1:
+        urgent_msg = "💀💀💀 <b>【緊急通知：極端超買訊號觸發】</b> 💀💀💀\n"
+        urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{sell_count} 項</b> 超買達標！\n"
+        urgent_msg += "強烈建議留意風險、適度減碼或避險！"
         send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
 
     send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
