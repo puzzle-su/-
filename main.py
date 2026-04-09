@@ -1,8 +1,3 @@
-沒有問題！為了確保不會再遇到任何掉字或語法錯誤的狀況，以下是最完整的 `main.py` 程式碼。
-
-建議您直接在 GitHub 編輯頁面上，按 `Ctrl+A` (全選)，然後 `Ctrl+V` (貼上)，直接**整份取代**掉原有的檔案就好：
-
-```python
 import os
 import sys
 import logging
@@ -591,4 +586,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
