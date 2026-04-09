@@ -52,7 +52,7 @@ def get_macro_data():
     # 1. 芝加哥聯儲國家金融狀況指數 (NFCI)
     try:
         nfci = web.DataReader('NFCI', 'fred')
-        nfci_val = round(nfci.iloc[-1][0], 2)
+        nfci_val = round(nfci.iloc[-1].iloc[0], 2)
         status = "🔴 資金偏緊縮 (壓力大)" if nfci_val > 0 else "🟢 資金流動性健康 (寬鬆)"
         macro_info.append(f"- 🏦 <b>聯儲金融狀況指數 (NFCI)</b>: {nfci_val} ({status})")
     except Exception as e:
@@ -61,7 +61,7 @@ def get_macro_data():
     # 2. 10年期-2年期 公債殖利率利差 (T10Y2Y)
     try:
         t10y2y = web.DataReader('T10Y2Y', 'fred')
-        spread = round(t10y2y.iloc[-1][0], 2)
+        spread = round(t10y2y.iloc[-1].iloc[0], 2)
         status = "⚠️ <b>殖利率倒掛中 (衰退警訊)</b>" if spread < 0 else "✅ 正常斜率 (低衰退疑慮)"
         macro_info.append(f"- 📉 <b>美債 10Y-2Y 利差</b>: {spread}% [{status}]")
     except Exception as e:
@@ -70,7 +70,7 @@ def get_macro_data():
     # 3. 薩姆規則衰退指標 (Sahm Rule)
     try:
         sahm = web.DataReader('SAHMREALTIME', 'fred')
-        sahm_val = round(sahm.iloc[-1][0], 2)
+        sahm_val = round(sahm.iloc[-1].iloc[0], 2)
         status = "⚠️ <b>觸發衰退警戒 (失業率飆升)</b>" if sahm_val >= 0.5 else "✅ 就業市場尚穩"
         macro_info.append(f"- 👥 <b>薩姆規則衰退指標</b>: {sahm_val} [{status}]")
     except Exception as e:
@@ -81,7 +81,7 @@ def get_macro_data():
         spy = yf.Ticker("SPY")
         pe = spy.info.get("trailingPE", 25) 
         dgs10_data = web.DataReader('DGS10', 'fred')
-        dgs10 = dgs10_data.dropna().iloc[-1][0]
+        dgs10 = dgs10_data.dropna().iloc[-1].iloc[0]
         
         erp = round((1 / pe) * 100 - dgs10, 2)
         status = "🔴 股市無超額報酬 (風險過高/估值貴)" if erp < 0 else ("✅ 股市風險溢酬佳" if erp >= 2 else "⚪ 估值偏高區間")
@@ -239,7 +239,7 @@ def get_market_data():
                 "代碼": ticker,
                 "目前價格": f"{current_price:.2f}",
                 "漲跌幅": f"{pct_change:+.2f}%",
-                "趨勢": trend,
+                "趨势": trend,
                 "指標": f"RSI: {rsi:.1f}{special_signal}",
                 "型態": pattern_txt
             })
@@ -346,7 +346,7 @@ def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
             sell_count += 1
         else:
             status = "⚪ 中性"
-        signals.append(f"1. 恐懼貪婪指數: {fgi} / 門檻 <10 或 >75 [{status}]")
+        signals.append(f"1. 恐懼貪婪指數: {fgi} / 門檻小於10或大於75 [{status}]")
     except Exception:
         signals.append("1. 恐懼貪婪指數: 擷取失敗")
         
@@ -361,7 +361,7 @@ def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
             sell_count += 1
         else:
             status = "⚪ 中性"
-        signals.append(f"2. VIX 恐慌指數: {vix} / 門檻 >40 或 <15 [{status}]")
+        signals.append(f"2. VIX 恐慌指數: {vix} / 門檻大於40或小於15 [{status}]")
     except Exception:
         signals.append("2. VIX 恐慌指數: 擷取失敗")
 
@@ -376,7 +376,7 @@ def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
             sell_count += 1
         else:
             status = "⚪ 中性"
-        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻 <30 或 >70 [{status}]")
+        signals.append(f"3. 標普大盤 RSI : {rsi_val} / 門檻小於30或大於70 [{status}]")
     else:
         signals.append("3. 標普大盤 RSI : 資料不足")
 
@@ -390,7 +390,7 @@ def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
             sell_count += 1
         else:
             status = "⚪ 中性"
-        signals.append(f"4. 標普 S5FI: {s5fi_val:.1f}% / 門檻 <10% 或 >85% [{status}]")
+        signals.append(f"4. 標普 S5FI: {s5fi_val:.1f}% / 門檻小於10%或大於85% [{status}]")
     else:
         signals.append("4. 標普 S5FI: 擷取失敗")
 
@@ -404,7 +404,7 @@ def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
             sell_count += 1
         else:
             status = "⚪ 中性"
-        signals.append(f"5. Put/Call Ratio 5MA: {pcr_5ma:.2f} / 門檻 >0.9 或 <0.7 [{status}]")
+        signals.append(f"5. Put/Call Ratio 5MA: {pcr_5ma:.2f} / 門檻大於0.9或小於0.7 [{status}]")
     else:
         signals.append("5. Put/Call Ratio 5MA: 擷取失敗")
 
