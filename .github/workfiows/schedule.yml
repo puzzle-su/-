@@ -2,8 +2,8 @@ name: Quant Bot Daily Report
 
 on:
   schedule:
-    # 每天 UTC 時間 00:00 執行 (等於台灣時間早上 08:00)
-    - cron: '0 0 * * *'
+    # 台灣時間早上 08:00 (UTC 00:00) 與晚上 23:00 (UTC 15:00) 各執行一次
+    - cron: '0 0,15 * * *'
   workflow_dispatch: # 允許使用網頁介面隨時手動點擊執行按鈕進行測試
 
 jobs:
