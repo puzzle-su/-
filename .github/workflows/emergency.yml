@@ -2,8 +2,8 @@ name: Emergency Bottom-Fishing Monitor
 
 on:
   schedule:
-    # 全天候 24 小時，每 1 小時檢查追蹤一次
-    - cron: '0 * * * *'
+    # 全天候 24 小時，每 3 小時檢查追蹤一次
+    - cron: '0 */3 * * *'
   workflow_dispatch: # 允許手動點擊測試
 
 jobs:
