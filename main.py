@@ -10,6 +10,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 import pandas_datareader.data as web
 from scipy.signal import argrelextrema
+from scipy.stats import linregress
 
 # 設定 Log，方便我們追蹤程式運作狀態
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -94,6 +95,18 @@ def get_macro_data():
 # ==========================================
 # 3. 核心量化與型態學分析 (Pattern & Wave)
 # ==========================================
+def get_crypto_fng():
+    try:
+         r = session.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+         data = r.json()
+         val = int(data['data'][0]['value'])
+         class_name = data['data'][0]['value_classification']
+         mapping = {"Extreme Greed": "極度貪婪", "Greed": "貪婪", "Neutral": "中性", "Fear": "恐懼", "Extreme Fear": "極度恐慌"}
+         zh_class = mapping.get(class_name, class_name)
+         return f"🪙 加密貨幣情緒: {val} ({zh_class})"
+    except:
+         return None
+
 def calculate_rsi(data, window=14):
     delta = data['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -102,39 +115,101 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def analyze_patterns(hist_df):
-    if len(hist_df) < 60:
-        return "資料不足"
+    if len(hist_df) < 90:
+        return ""
         
-    prices = hist_df['Close'].tail(60).values
-    local_maxima = argrelextrema(prices, np.greater, order=3)[0]
-    local_minima = argrelextrema(prices, np.less, order=3)[0]
+    prices = hist_df['Close'].tail(90).values
+    
+    local_maxima = argrelextrema(prices, np.greater, order=4)[0]
+    local_minima = argrelextrema(prices, np.less, order=4)[0]
     
     patterns = []
-    if len(local_maxima) >= 2 and len(local_minima) >= 1:
-        last_two_peaks = prices[local_maxima[-2:]]
-        if abs(last_two_peaks[0] - last_two_peaks[1]) / last_two_peaks[0] < 0.02:
-            patterns.append("⚠️ M頭雙頂疑慮")
+    
+    support_levels = []
+    resist_levels = []
+    current_price = prices[-1]
+    
+    if len(local_maxima) >= 2:
+        for idx in range(len(local_maxima)):
+            for jdx in range(idx + 1, len(local_maxima)):
+                p1, p2 = prices[local_maxima[idx]], prices[local_maxima[jdx]]
+                if abs(p1 - p2) / max(p1, p2) < 0.015:
+                    resist_levels.append((p1 + p2) / 2)
+    if len(local_minima) >= 2:
+        for idx in range(len(local_minima)):
+            for jdx in range(idx + 1, len(local_minima)):
+                v1, v2 = prices[local_minima[idx]], prices[local_minima[jdx]]
+                if abs(v1 - v2) / max(v1, v2) < 0.015:
+                    support_levels.append((v1 + v2) / 2)
+                    
+    is_at_support = False
+    is_at_resist = False
+    for r in resist_levels:
+        if abs(r - current_price) / r < 0.02:
+            patterns.append("🔴 逼近上方壓力")
+            is_at_resist = True
+            break
+    for s in support_levels:
+        if abs(current_price - s) / s < 0.02:
+            patterns.append("🟢 測底支撐")
+            is_at_support = True
+            break
             
-        if len(local_maxima) >= 3 and len(local_minima) >= 3:
-            p1, p2, p3 = prices[local_maxima[-3:]]
-            v1, v2, v3 = prices[local_minima[-3:]]
-            if p3 > p2 > p1 and v3 > v2 > v1:
-                patterns.append("🌊 多頭黃金推升波 (推升段)")
-            elif p3 < p2 < p1 and v3 < v2 < v1:
-                patterns.append("📉 ABC空方修正波 (探底中)")
+    if is_at_support and len(resist_levels) > 0 and current_price < max(resist_levels):
+         patterns.append("⚪ 箱型盤整(下緣)")
+    elif is_at_resist and len(support_levels) > 0 and current_price > min(support_levels):
+         patterns.append("⚪ 箱型盤整(上緣)")
 
-    if len(local_minima) >= 2 and len(local_maxima) >= 1:
-        last_two_valleys = prices[local_minima[-2:]]
-        if abs(last_two_valleys[0] - last_two_valleys[1]) / last_two_valleys[0] < 0.02:
-            if prices[-1] > last_two_valleys[1] * 1.02:
-               patterns.append("🛡️ 強勢 W底成型")
+    if len(local_maxima) >= 3:
+        p1, p2, p3 = prices[local_maxima[-3:]]
+        if abs(p1-p2)/p2 < 0.02 and abs(p2-p3)/p3 < 0.02 and current_price < p3:
+            patterns.append("🔴 三重頂(強空)")
+        elif p2 > p1 and p2 > p3 and abs(p1-p3)/max(p1,p3) < 0.03:
+            patterns.append("🔴 頭肩頂(防暴跌)")
+    elif len(local_maxima) >= 2:
+        p1, p2 = prices[local_maxima[-2:]]
+        if abs(p1-p2)/max(p1,p2) < 0.02:
+            patterns.append("🔴 M頭(雙頂)")
+            
+    if len(local_minima) >= 3:
+        v1, v2, v3 = prices[local_minima[-3:]]
+        if abs(v1-v2)/v2 < 0.02 and abs(v2-v3)/v3 < 0.02 and current_price > v3:
+            patterns.append("🟢 三重底(強多)")
+        elif v2 < v1 and v2 < v3 and abs(v1-v3)/max(v1,v3) < 0.03:
+            patterns.append("🟢 頭肩底(迎暴漲)")
+    elif len(local_minima) >= 2:
+        v1, v2 = prices[local_minima[-2:]]
+        if abs(v1-v2)/max(v1,v2) < 0.02:
+            if current_price > v2 * 1.02:
+                 patterns.append("🟢 築底完成(W底)")
             else:
-               patterns.append("🛡️ 正在構築 W底打底")
-               
-    if not patterns:
-        return "⚪ 無明顯大型轉折型態"
+                 patterns.append("🟢 打底中(W底)")
+
+    recent_prices = prices[-35:]
+    rec_max = argrelextrema(recent_prices, np.greater, order=2)[0]
+    rec_min = argrelextrema(recent_prices, np.less, order=2)[0]
+    
+    if len(rec_max) >= 3 and len(rec_min) >= 3:
+        slope_high, _, _, _, _ = linregress(rec_max, recent_prices[rec_max])
+        slope_low, _, _, _, _ = linregress(rec_min, recent_prices[rec_min])
+        avg_px = np.mean(recent_prices)
+        sh_pct = slope_high / avg_px * 100
+        sl_pct = slope_low / avg_px * 100
         
-    return " / ".join(patterns)
+        if sh_pct < -0.1 and sl_pct > 0.1:
+            patterns.append("⚪ 三角收斂")
+        elif sh_pct > 0.1 and sl_pct > 0.1:
+            if sl_pct > sh_pct * 1.3:
+                patterns.append("🔴 上升楔型")
+            elif abs(sh_pct - sl_pct) < 0.1:
+                patterns.append("⚪ 上升通道")
+        elif sh_pct < -0.1 and sl_pct < -0.1:
+            if sh_pct < sl_pct * 1.3: 
+                patterns.append("🟢 下降楔型")
+            elif abs(sh_pct - sl_pct) < 0.1:
+                patterns.append("⚪ 下降通道")
+    
+    return " / ".join(patterns) if patterns else ""
 
 def get_market_data():
     results = []
@@ -151,6 +226,7 @@ def get_market_data():
                 continue
             
             # 計算均線
+            hist['MA5'] = hist['Close'].rolling(window=5).mean()
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
             hist['MA60'] = hist['Close'].rolling(window=60).mean()
             hist['MA200'] = hist['Close'].rolling(window=200).mean()
@@ -166,8 +242,17 @@ def get_market_data():
 
             current_price = hist['Close'].iloc[-1]
             prev_price = hist['Close'].iloc[-2]
+            O = hist['Open'].iloc[-1]
+            H = hist['High'].iloc[-1]
+            L = hist['Low'].iloc[-1]
+            C = current_price
+            
+            ma5 = hist['MA5'].iloc[-1]
+            prev_ma5 = hist['MA5'].iloc[-2]
             ma20 = hist['MA20'].iloc[-1]
+            prev_ma20 = hist['MA20'].iloc[-2]
             ma60 = hist['MA60'].iloc[-1]
+            prev_ma60 = hist['MA60'].iloc[-2]
             ma200 = hist['MA200'].iloc[-1]
             std20 = hist['STD20'].iloc[-1]
             rsi = hist['RSI'].iloc[-1]
@@ -179,7 +264,7 @@ def get_market_data():
                 gold_price = current_price
             elif ticker == "SI=F":
                 silver_price = current_price
-
+                
             # 多空均線排列判定
             above_mas = []
             below_mas = []
@@ -232,7 +317,39 @@ def get_market_data():
             else:
                 momentum_text = "⚪ 中性"
             
+            crossover_signal = ""
+            if prev_ma5 <= prev_ma20 and ma5 > ma20:
+                if ma60 > prev_ma60: crossover_signal = " 💥 黃金交叉(多)"
+                else: crossover_signal = " ⚠️ 弱勢金叉(有壓)"
+            elif prev_ma5 >= prev_ma20 and ma5 < ma20:
+                if ma60 < prev_ma60: crossover_signal = " 💀 死亡交叉(空)"
+                else: crossover_signal = " 🛡️ 假跌破(支撐中)"
+                
+            candle_signals = []
+            body = abs(C - O)
+            total_range = H - L
+            upper_shadow = H - max(C, O)
+            lower_shadow = min(C, O) - L
+            if total_range > 0:
+                if C > O and (body / O) > 0.015 and upper_shadow < body * 0.2 and lower_shadow < body * 0.2:
+                    candle_signals.append("📈 大陽線")
+                elif lower_shadow > body * 2 and upper_shadow < body:
+                    candle_signals.append("🔨 下檔強支撐")
+                elif upper_shadow > body * 2 and lower_shadow < body:
+                    candle_signals.append("🗼 賣壓重")
+                elif body / total_range < 0.1 and total_range / O > 0.005:
+                    candle_signals.append("➕ 十字轉折")
+            candle_txt = " / ".join(candle_signals)
+
             pattern_txt = analyze_patterns(hist)
+            if candle_txt:
+                pattern_txt = pattern_txt + " / " + candle_txt if pattern_txt else candle_txt
+            
+            crypto_fng = ""
+            if ticker == "BTC-USD":
+                fng_str = get_crypto_fng()
+                if fng_str:
+                    crypto_fng = "\n   ➤ " + fng_str
             
             results.append({
                 "名稱": name,
@@ -240,8 +357,9 @@ def get_market_data():
                 "目前價格": f"{current_price:.2f}",
                 "漲跌幅": f"{pct_change:+.2f}%",
                 "趨勢": trend,
-                "指標": f"RSI(14日): {rsi:.1f}{special_signal}",
-                "型態": pattern_txt
+                "指標": f"RSI: {rsi:.1f}{special_signal}{crossover_signal}",
+                "型態": pattern_txt,
+                "extra": crypto_fng
             })
         except Exception as e:
             pass
@@ -441,4 +559,149 @@ def format_telegram_message(market_data, macro_data, extreme_signals, buy_count,
         msg += "⚠️⚠️ <b>【高檔過熱訊號提醒】</b> ⚠️⚠️\n"
         msg += f"<i>目前已有 {sell_count} 項極端超買指標達標！注意追高風險！</i>\n"
     elif sell_count == 1:
-        msg += "⚠️ <b>【過熱訊號發
+        msg += "⚠️ <b>【過熱訊號發酵中】</b> (1項達標)\n"
+        
+    if buy_count == 0 and sell_count == 0:
+        msg += "<i>目前處於平靜區間，未見極端市場情緒。</i>\n"
+        
+    for sig in extreme_signals:
+        msg += f"- {sig}\n"
+    msg += "\n"
+
+    # 全球行情與型態
+    msg += "<b>🎯 =【全球核心板塊巡禮】=</b>\n"
+    for item in market_data:
+        msg += f"<b>{item['名稱']}</b> ({item['代碼']})\n"
+        msg += f"   ➤ 價格: {item['目前價格']} ({item['漲跌幅']})\n"
+        msg += f"   ➤ 趨勢: {item['趨勢']}\n"
+        msg += f"   ➤ 指標: {item['指標']}" + item.get("extra", "") + "\n"
+        if item.get("型態"):
+            msg += f"   ➤ 型態: {item['型態']}\n"
+        msg += f"   ---\n"
+        
+    msg += "<i>💡 提示: 中長線投資首重總經，機器人波段判讀僅為技術面輔助。</i>"
+    return msg
+
+def send_telegram_message(bot_token, chat_id, message):
+    if not bot_token or not chat_id:
+        logging.warning("尚未設定 Bot Token 或 Chat ID，跳過發送並將內容印出於下方：\n" + message)
+        return
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        logging.info("✅ 成功發射到使用者的手機囉！")
+    except Exception as e:
+        logging.error(f"發送 Telegram 訊息失敗: {e}")
+
+# ==========================================
+# 主程式進入點
+# ==========================================
+def main():
+    # 判斷是否為獨立的盤中緊急監控模式
+    if len(sys.argv) > 1 and sys.argv[1] == '--emergency':
+        logging.info("執行盤中緊急監控模式...")
+        try:
+            hist = yf.Ticker("^GSPC").history(period="1mo")
+            hist['RSI'] = calculate_rsi(hist)
+            sp500_rsi = hist['RSI'].iloc[-1]
+        except:
+            sp500_rsi = None
+            
+        s5fi_val = get_breadth_data()
+        pcr_5ma = get_pcr_5ma()
+        extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma)
+        
+        if buy_count >= 1:
+            urgent_msg = "🚨🚨🚨 <b>【盤中緊急通知：極端超賣訊號觸發】</b> 🚨🚨🚨\n"
+            urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{buy_count} 項</b> 超賣達標！\n\n"
+            urgent_msg += "✅ <b>【達標指標】</b>\n"
+            for sig in extreme_signals:
+                if "🔴 超賣" in sig:
+                    urgent_msg += f"{sig}\n"
+            urgent_msg += "\n➖ <b>【未達標指標】</b>\n"
+            for sig in extreme_signals:
+                if "🔴 超賣" not in sig:
+                    urgent_msg += f"{sig}\n"
+            urgent_msg += "\n請立即開啟看盤軟體評估進場！"
+            send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+        elif sell_count >= 1:
+            urgent_msg = "💀💀💀 <b>【盤中緊急通知：極端超買訊號觸發】</b> 💀💀💀\n"
+            urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{sell_count} 項</b> 超買達標！\n\n"
+            urgent_msg += "✅ <b>【達標指標】</b>\n"
+            for sig in extreme_signals:
+                if "🟢 超買" in sig:
+                    urgent_msg += f"{sig}\n"
+            urgent_msg += "\n➖ <b>【未達標指標】</b>\n"
+            for sig in extreme_signals:
+                if "🟢 超買" not in sig:
+                    urgent_msg += f"{sig}\n"
+            urgent_msg += "\n強烈建議留意風險、適度減碼或避險！"
+            send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+        else:
+            logging.info(f"未達緊急標準。買入達標: {buy_count}，賣出達標: {sell_count}")
+        return
+
+    # 以下為原本的每日早報發送流程
+    macro_data = get_macro_data()
+    market_data, sp500_rsi, gold_price, silver_price = get_market_data()
+    
+    # 新增：金銀比估測模組 (整合進宏觀數據最後一項)
+    if gold_price and silver_price:
+        try:
+            gs_ratio = gold_price / silver_price
+            if gs_ratio > 80:
+                status = "🔴 白銀極端便宜 (白銀強烈買入區 / 黃金賣出區)"
+            elif gs_ratio < 50:
+                status = "🟢 黃金極端便宜 (黃金強烈買入區 / 白銀賣出區)"
+            else:
+                status = "⚪ 處於歷史合理區間"
+            macro_data.append(f"- 🪙 <b>貴金屬 金銀比 (GSR)</b>: {gs_ratio:.2f} [{status}]")
+        except:
+            pass
+
+    s5fi_val = get_breadth_data()
+    pcr_5ma = get_pcr_5ma()
+    extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma)
+    msg = format_telegram_message(market_data, macro_data, extreme_signals, buy_count, sell_count)
+    
+    # 判斷是否需要發送緊急獨立通知 (日報附帶)
+    if buy_count >= 1:
+        urgent_msg = "🔥🔥🔥 <b>【緊急通知：極端超賣訊號觸發】</b> 🔥🔥🔥\n"
+        urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{buy_count} 項</b> 超賣達標！\n\n"
+        urgent_msg += "✅ <b>【達標指標】</b>\n"
+        for sig in extreme_signals:
+            if "🔴 超賣" in sig:
+                urgent_msg += f"{sig}\n"
+        urgent_msg += "\n➖ <b>【未達標指標】</b>\n"
+        for sig in extreme_signals:
+            if "🔴 超賣" not in sig:
+                urgent_msg += f"{sig}\n"
+        urgent_msg += "\n請立即評估進場機會！"
+        send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+    elif sell_count >= 1:
+        urgent_msg = "💀💀💀 <b>【緊急通知：極端超買訊號觸發】</b> 💀💀💀\n"
+        urgent_msg += f"目前極端監控 5 項指標中，已有 <b>{sell_count} 項</b> 超買達標！\n\n"
+        urgent_msg += "✅ <b>【達標指標】</b>\n"
+        for sig in extreme_signals:
+            if "🟢 超買" in sig:
+                urgent_msg += f"{sig}\n"
+        urgent_msg += "\n➖ <b>【未達標指標】</b>\n"
+        for sig in extreme_signals:
+            if "🟢 超買" not in sig:
+                urgent_msg += f"{sig}\n"
+        urgent_msg += "\n強烈建議留意風險、適度減碼或避險！"
+        send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, urgent_msg)
+
+    send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
+
+if __name__ == "__main__":
+    main()
