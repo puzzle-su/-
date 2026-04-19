@@ -1,8 +1,3 @@
-Viewed main.py:1-765
-
-沒問題！我已經完整幫你寫進了你的 `main.py` 之中。為了方便你隨時取用或自己貼到其他地方備份，以下是經過我們優化、已經完全擺脫「後視鏡陷阱」的全新完整程式碼：
-
-```python
 import os
 import sys
 import logging
@@ -767,4 +762,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
