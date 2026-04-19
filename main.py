@@ -1,3 +1,8 @@
+Viewed main.py:1-765
+
+沒問題！我已經完整幫你寫進了你的 `main.py` 之中。為了方便你隨時取用或自己貼到其他地方備份，以下是經過我們優化、已經完全擺脫「後視鏡陷阱」的全新完整程式碼：
+
+```python
 import os
 import sys
 import logging
@@ -114,102 +119,153 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def analyze_patterns(hist_df):
-    if len(hist_df) < 90:
+def analyze_patterns(hist_df, current_ma60, current_ma200):
+    if len(hist_df) < 60:
         return ""
         
-    prices = hist_df['Close'].tail(90).values
+    prices = hist_df['Close'].tail(60).values
     
-    local_maxima = argrelextrema(prices, np.greater, order=4)[0]
-    local_minima = argrelextrema(prices, np.less, order=4)[0]
+    current_price = prices[-1]
+    last_atr = hist_df['ATR'].iloc[-1]
     
+    # 步驟 1. 趨勢定位
+    if pd.isna(current_ma200):
+        current_ma200 = current_ma60
+        
+    if current_price > current_ma60 and current_price > current_ma200:
+        trend_context = "bull"
+    elif current_price < current_ma60 and current_price < current_ma200:
+        trend_context = "bear"
+    else:
+        trend_context = "neutral"
+        
     patterns = []
     
-    support_levels = []
-    resist_levels = []
-    current_price = prices[-1]
+    # 步驟 2. 動態支撐壓力
+    recent_20 = hist_df.tail(20)
+    dynamic_resist = recent_20['High'].max()
+    dynamic_support = recent_20['Low'].min()
     
-    if len(local_maxima) >= 2:
-        for idx in range(len(local_maxima)):
-            for jdx in range(idx + 1, len(local_maxima)):
-                p1, p2 = prices[local_maxima[idx]], prices[local_maxima[jdx]]
-                if abs(p1 - p2) / max(p1, p2) < 0.015:
-                    resist_levels.append((p1 + p2) / 2)
-    if len(local_minima) >= 2:
-        for idx in range(len(local_minima)):
-            for jdx in range(idx + 1, len(local_minima)):
-                v1, v2 = prices[local_minima[idx]], prices[local_minima[jdx]]
-                if abs(v1 - v2) / max(v1, v2) < 0.015:
-                    support_levels.append((v1 + v2) / 2)
-                    
-    is_at_support = False
-    is_at_resist = False
-    for r in resist_levels:
-        if abs(r - current_price) / r < 0.02:
-            patterns.append("🔴 逼近上方壓力")
-            is_at_resist = True
-            break
-    for s in support_levels:
-        if abs(current_price - s) / s < 0.02:
-            patterns.append("🟢 測底支撐")
-            is_at_support = True
-            break
+    # 小波段 (用以判斷頸線)
+    minor_maxima = argrelextrema(prices, np.greater, order=2)[0]
+    minor_minima = argrelextrema(prices, np.less, order=2)[0]
+    
+    invalidated = False
+    
+    # W底 判定
+    if len(minor_minima) >= 2:
+        idx1, idx2 = minor_minima[-2:]
+        v1, v2 = prices[idx1], prices[idx2]
+        if abs(v1 - v2) < last_atr * 1.5:
+            neckline_idx = np.argmax(prices[idx1:idx2+1]) + idx1
+            neckline = prices[neckline_idx]
             
-    if is_at_support and len(resist_levels) > 0 and current_price < max(resist_levels):
-         patterns.append("⚪ 箱型盤整(下緣)")
-    elif is_at_resist and len(support_levels) > 0 and current_price > min(support_levels):
-         patterns.append("⚪ 箱型盤整(上緣)")
+            if current_price > neckline: # 右側確認
+                if trend_context in ["bull", "neutral"]:
+                    patterns.append("🟢 W底(右側確認/頸線突破)")
+                else:
+                    patterns.append("⚪ W底(逆勢反彈)")
+            elif current_price < v1 - last_atr and current_price < v2 - last_atr:
+                patterns.append("🔴 W底跌破失效")
+                invalidated = True
+            elif current_price > v2: # 左側預警
+                patterns.append("🟡 W底(右腳成型/挑戰頸線)")
+                
+    # M頭 判定
+    if len(minor_maxima) >= 2:
+        idx1, idx2 = minor_maxima[-2:]
+        p1, p2 = prices[idx1], prices[idx2]
+        if abs(p1 - p2) < last_atr * 1.5:
+            neckline_idx = np.argmin(prices[idx1:idx2+1]) + idx1
+            neckline = prices[neckline_idx]
+            
+            if current_price < neckline: # 右側確認
+                if trend_context in ["bear", "neutral"]:
+                    patterns.append("🔴 M頭(右側確認/跌破頸線)")
+                else:
+                    patterns.append("⚪ M頭(高檔回調)")
+            elif current_price > p1 + last_atr and current_price > p2 + last_atr:
+                patterns.append("🟢 M頭突破失效")
+                invalidated = True
+            elif current_price < p2: # 左側預警
+                patterns.append("🟡 M頭(右肩成型/測頸線支撐)")
 
-    if len(local_maxima) >= 3:
-        p1, p2, p3 = prices[local_maxima[-3:]]
-        if abs(p1-p2)/p2 < 0.02 and abs(p2-p3)/p3 < 0.02 and current_price < p3:
-            patterns.append("🔴 三重頂(強空)")
-        elif p2 > p1 and p2 > p3 and abs(p1-p3)/max(p1,p3) < 0.03:
-            patterns.append("🔴 頭肩頂(防暴跌)")
-    elif len(local_maxima) >= 2:
-        p1, p2 = prices[local_maxima[-2:]]
-        if abs(p1-p2)/max(p1,p2) < 0.02:
-            patterns.append("🔴 M頭(雙頂)")
+    # 步驟 3: 當下動能檢核
+    last_3 = hist_df.tail(3)
+    vol_trend = "neutral"
+    if 'Volume' in last_3.columns and last_3['Volume'].sum() > 0:
+        if last_3['Volume'].iloc[-1] > last_3['Volume'].iloc[-2]:
+            vol_trend = "up"
             
-    if len(local_minima) >= 3:
-        v1, v2, v3 = prices[local_minima[-3:]]
-        if abs(v1-v2)/v2 < 0.02 and abs(v2-v3)/v3 < 0.02 and current_price > v3:
-            patterns.append("🟢 三重底(強多)")
-        elif v2 < v1 and v2 < v3 and abs(v1-v3)/max(v1,v3) < 0.03:
-            patterns.append("🟢 頭肩底(迎暴漲)")
-    elif len(local_minima) >= 2:
-        v1, v2 = prices[local_minima[-2:]]
-        if abs(v1-v2)/max(v1,v2) < 0.02:
-            if current_price > v2 * 1.02:
-                 patterns.append("🟢 築底完成(W底)")
+    slope_3, _, _, _, _ = linregress(range(3), last_3['Close'].values)
+    momentum = ""
+    # slope_3 > 0 表示價格上漲
+    if slope_3 > last_atr * 0.2 and vol_trend == "up":
+        momentum = " (帶量上攻)"
+    elif slope_3 < -last_atr * 0.2 and vol_trend == "up":
+        momentum = " (帶量下殺)"
+        
+    # 步驟 4. 訊號過濾與動態防區突破
+    if not invalidated:
+        if current_price >= dynamic_resist - last_atr * 0.5:
+            if trend_context == "bear":
+                patterns.append("🔴 測壓(順勢空點未破)")
             else:
-                 patterns.append("🟢 打底中(W底)")
+                if current_price > dynamic_resist:
+                     patterns.append("🟢 突破短期箱上緣")
+                else:
+                     patterns.append("🟡 挑戰箱頂壓力")
+                     
+        if current_price <= dynamic_support + last_atr * 0.5:
+            if trend_context == "bull":
+                patterns.append("🟢 測底(順勢買點未破)")
+            else:
+                if current_price < dynamic_support:
+                     patterns.append("🔴 跌破短期箱下緣")
+                else:
+                     patterns.append("🟡 回測箱底支撐")
 
-    recent_prices = prices[-35:]
+    # 收斂/通道 (大波段輔助)
+    recent_prices = prices[-30:]
     rec_max = argrelextrema(recent_prices, np.greater, order=2)[0]
     rec_min = argrelextrema(recent_prices, np.less, order=2)[0]
     
     if len(rec_max) >= 3 and len(rec_min) >= 3:
-        slope_high, _, _, _, _ = linregress(rec_max, recent_prices[rec_max])
-        slope_low, _, _, _, _ = linregress(rec_min, recent_prices[rec_min])
-        avg_px = np.mean(recent_prices)
-        sh_pct = slope_high / avg_px * 100
-        sl_pct = slope_low / avg_px * 100
+        sh_slope, _, _, _, _ = linregress(rec_max, recent_prices[rec_max])
+        sl_slope, _, _, _, _ = linregress(rec_min, recent_prices[rec_min])
+        avg_price = np.mean(recent_prices)
+        sh_pct = sh_slope / avg_price * 100
+        sl_pct = sl_slope / avg_price * 100
         
         if sh_pct < -0.1 and sl_pct > 0.1:
-            patterns.append("⚪ 三角收斂")
+            if current_price > recent_prices[rec_max[-1]]:
+                patterns.append("🟢 三角收斂突破")
+            elif current_price < recent_prices[rec_min[-1]]:
+                patterns.append("🔴 三角收斂跌破")
+            else:
+                patterns.append("⚪ 三角收斂(末端)")
         elif sh_pct > 0.1 and sl_pct > 0.1:
-            if sl_pct > sh_pct * 1.3:
-                patterns.append("🔴 上升楔型")
-            elif abs(sh_pct - sl_pct) < 0.1:
+            if current_price < recent_prices[rec_min[-1]]:
+                patterns.append("🔴 上升通道(跌破失效)")
+            else:
                 patterns.append("⚪ 上升通道")
         elif sh_pct < -0.1 and sl_pct < -0.1:
-            if sh_pct < sl_pct * 1.3: 
-                patterns.append("🟢 下降楔型")
-            elif abs(sh_pct - sl_pct) < 0.1:
+            if current_price > recent_prices[rec_max[-1]]:
+                patterns.append("🟢 下降通道(突破失效)")
+            else:
                 patterns.append("⚪ 下降通道")
-    
-    return " / ".join(patterns) if patterns else ""
+
+    # 濾除重複標籤並保留順序
+    filtered_patterns = []
+    for p in patterns:
+        if p not in filtered_patterns:
+            filtered_patterns.append(p)
+            
+    res = " / ".join(filtered_patterns)
+    if res and momentum:
+        res += momentum
+        
+    return res
 
 def get_market_data():
     results = []
@@ -232,6 +288,12 @@ def get_market_data():
             hist['MA200'] = hist['Close'].rolling(window=200).mean()
             hist['STD20'] = hist['Close'].rolling(window=20).std()
             hist['RSI'] = calculate_rsi(hist)
+
+            # 計算 ATR
+            hist['TR'] = np.maximum(hist['High'] - hist['Low'], 
+                                    np.maximum(abs(hist['High'] - hist['Close'].shift(1)), 
+                                               abs(hist['Low'] - hist['Close'].shift(1))))
+            hist['ATR'] = hist['TR'].rolling(window=14).mean()
 
             # 計算 KD 值 (9, 3, 3)
             hist['Low_9'] = hist['Low'].rolling(window=9).min()
@@ -264,7 +326,7 @@ def get_market_data():
                 gold_price = current_price
             elif ticker == "SI=F":
                 silver_price = current_price
-                
+
             # 多空均線排列判定
             above_mas = []
             below_mas = []
@@ -341,7 +403,7 @@ def get_market_data():
                     candle_signals.append("➕ 十字轉折")
             candle_txt = " / ".join(candle_signals)
 
-            pattern_txt = analyze_patterns(hist)
+            pattern_txt = analyze_patterns(hist, ma60, ma200)
             if candle_txt:
                 pattern_txt = pattern_txt + " / " + candle_txt if pattern_txt else candle_txt
             
@@ -705,3 +767,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
