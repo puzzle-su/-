@@ -90,10 +90,34 @@ def get_macro_data():
     except Exception as e:
         macro_info.append(f"- ⚖️ <b>標普股票風險溢酬 (ERP)</b>: 擷取失敗")
 
+    # 5. 高收益債信用利差 (High Yield OAS) - Z-Score 風險判斷
+    try:
+        end_date = datetime.now()
+        start_date = end_date - pd.DateOffset(years=10)
+        hy_spread = web.DataReader('BAMLH0A0HYM2', 'fred', start_date, end_date)
+        
+        if not hy_spread.empty:
+            current_spread = hy_spread.iloc[-1].iloc[0]
+            mean_10y = hy_spread.mean().iloc[0]
+            std_10y = hy_spread.std().iloc[0]
+            
+            z_score = (current_spread - mean_10y) / std_10y
+            
+            if z_score >= 1.5:
+                status = "🔴 高風險區 (違約疑慮飆升)"
+            elif z_score <= -1.0:
+                status = "🟢 低風險區 (市場極度樂觀)"
+            else:
+                status = "⚪ 中性區間"
+                
+            macro_info.append(f"- 💥 <b>高收益債信用利差</b>: {current_spread:.2f}% (Z-Score: {z_score:.2f}) [{status}]")
+    except Exception as e:
+        macro_info.append("- 💥 <b>高收益債信用利差</b>: 擷取失敗")
+
     return macro_info
 
 # ==========================================
-# 3. 核心量化與型態學分析 (Pattern & Wave)
+# 3. 核心量化分析
 # ==========================================
 def get_crypto_fng():
     try:
@@ -113,154 +137,6 @@ def calculate_rsi(data, window=14):
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
-
-def analyze_patterns(hist_df, current_ma60, current_ma200):
-    if len(hist_df) < 60:
-        return ""
-        
-    prices = hist_df['Close'].tail(60).values
-    
-    current_price = prices[-1]
-    last_atr = hist_df['ATR'].iloc[-1]
-    
-    # 步驟 1. 趨勢定位
-    if pd.isna(current_ma200):
-        current_ma200 = current_ma60
-        
-    if current_price > current_ma60 and current_price > current_ma200:
-        trend_context = "bull"
-    elif current_price < current_ma60 and current_price < current_ma200:
-        trend_context = "bear"
-    else:
-        trend_context = "neutral"
-        
-    patterns = []
-    
-    # 步驟 2. 動態支撐壓力
-    recent_20 = hist_df.tail(20)
-    dynamic_resist = recent_20['High'].max()
-    dynamic_support = recent_20['Low'].min()
-    
-    # 小波段 (用以判斷頸線)
-    minor_maxima = argrelextrema(prices, np.greater, order=2)[0]
-    minor_minima = argrelextrema(prices, np.less, order=2)[0]
-    
-    invalidated = False
-    
-    # W底 判定
-    if len(minor_minima) >= 2:
-        idx1, idx2 = minor_minima[-2:]
-        v1, v2 = prices[idx1], prices[idx2]
-        if abs(v1 - v2) < last_atr * 1.5:
-            neckline_idx = np.argmax(prices[idx1:idx2+1]) + idx1
-            neckline = prices[neckline_idx]
-            
-            if current_price > neckline: # 右側確認
-                if trend_context in ["bull", "neutral"]:
-                    patterns.append("🟢 W底(右側確認/頸線突破)")
-                else:
-                    patterns.append("⚪ W底(逆勢反彈)")
-            elif current_price < v1 - last_atr and current_price < v2 - last_atr:
-                patterns.append("🔴 W底跌破失效")
-                invalidated = True
-            elif current_price > v2: # 左側預警
-                patterns.append("🟡 W底(右腳成型/挑戰頸線)")
-                
-    # M頭 判定
-    if len(minor_maxima) >= 2:
-        idx1, idx2 = minor_maxima[-2:]
-        p1, p2 = prices[idx1], prices[idx2]
-        if abs(p1 - p2) < last_atr * 1.5:
-            neckline_idx = np.argmin(prices[idx1:idx2+1]) + idx1
-            neckline = prices[neckline_idx]
-            
-            if current_price < neckline: # 右側確認
-                if trend_context in ["bear", "neutral"]:
-                    patterns.append("🔴 M頭(右側確認/跌破頸線)")
-                else:
-                    patterns.append("⚪ M頭(高檔回調)")
-            elif current_price > p1 + last_atr and current_price > p2 + last_atr:
-                patterns.append("🟢 M頭突破失效")
-                invalidated = True
-            elif current_price < p2: # 左側預警
-                patterns.append("🟡 M頭(右肩成型/測頸線支撐)")
-
-    # 步驟 3: 當下動能檢核
-    last_3 = hist_df.tail(3)
-    vol_trend = "neutral"
-    if 'Volume' in last_3.columns and last_3['Volume'].sum() > 0:
-        if last_3['Volume'].iloc[-1] > last_3['Volume'].iloc[-2]:
-            vol_trend = "up"
-            
-    slope_3, _, _, _, _ = linregress(range(3), last_3['Close'].values)
-    momentum = ""
-    # slope_3 > 0 表示價格上漲
-    if slope_3 > last_atr * 0.2 and vol_trend == "up":
-        momentum = " (帶量上攻)"
-    elif slope_3 < -last_atr * 0.2 and vol_trend == "up":
-        momentum = " (帶量下殺)"
-        
-    # 步驟 4. 訊號過濾與動態防區突破
-    if not invalidated:
-        if current_price >= dynamic_resist - last_atr * 0.5:
-            if trend_context == "bear":
-                patterns.append("🔴 測壓(順勢空點未破)")
-            else:
-                if current_price > dynamic_resist:
-                     patterns.append("🟢 突破短期箱上緣")
-                else:
-                     patterns.append("🟡 挑戰箱頂壓力")
-                     
-        if current_price <= dynamic_support + last_atr * 0.5:
-            if trend_context == "bull":
-                patterns.append("🟢 測底(順勢買點未破)")
-            else:
-                if current_price < dynamic_support:
-                     patterns.append("🔴 跌破短期箱下緣")
-                else:
-                     patterns.append("🟡 回測箱底支撐")
-
-    # 收斂/通道 (大波段輔助)
-    recent_prices = prices[-30:]
-    rec_max = argrelextrema(recent_prices, np.greater, order=2)[0]
-    rec_min = argrelextrema(recent_prices, np.less, order=2)[0]
-    
-    if len(rec_max) >= 3 and len(rec_min) >= 3:
-        sh_slope, _, _, _, _ = linregress(rec_max, recent_prices[rec_max])
-        sl_slope, _, _, _, _ = linregress(rec_min, recent_prices[rec_min])
-        avg_price = np.mean(recent_prices)
-        sh_pct = sh_slope / avg_price * 100
-        sl_pct = sl_slope / avg_price * 100
-        
-        if sh_pct < -0.1 and sl_pct > 0.1:
-            if current_price > recent_prices[rec_max[-1]]:
-                patterns.append("🟢 三角收斂突破")
-            elif current_price < recent_prices[rec_min[-1]]:
-                patterns.append("🔴 三角收斂跌破")
-            else:
-                patterns.append("⚪ 三角收斂(末端)")
-        elif sh_pct > 0.1 and sl_pct > 0.1:
-            if current_price < recent_prices[rec_min[-1]]:
-                patterns.append("🔴 上升通道(跌破失效)")
-            else:
-                patterns.append("⚪ 上升通道")
-        elif sh_pct < -0.1 and sl_pct < -0.1:
-            if current_price > recent_prices[rec_max[-1]]:
-                patterns.append("🟢 下降通道(突破失效)")
-            else:
-                patterns.append("⚪ 下降通道")
-
-    # 濾除重複標籤並保留順序
-    filtered_patterns = []
-    for p in patterns:
-        if p not in filtered_patterns:
-            filtered_patterns.append(p)
-            
-    res = " / ".join(filtered_patterns)
-    if res and momentum:
-        res += momentum
-        
-    return res
 
 def get_market_data():
     results = []
@@ -382,26 +258,41 @@ def get_market_data():
                 if ma60 < prev_ma60: crossover_signal = " 💀 死亡交叉(空)"
                 else: crossover_signal = " 🛡️ 假跌破(支撐中)"
                 
-            candle_signals = []
-            body = abs(C - O)
-            total_range = H - L
-            upper_shadow = H - max(C, O)
-            lower_shadow = min(C, O) - L
-            if total_range > 0:
-                if C > O and (body / O) > 0.015 and upper_shadow < body * 0.2 and lower_shadow < body * 0.2:
-                    candle_signals.append("📈 大陽線")
-                elif lower_shadow > body * 2 and upper_shadow < body:
-                    candle_signals.append("🔨 下檔強支撐")
-                elif upper_shadow > body * 2 and lower_shadow < body:
-                    candle_signals.append("🗼 賣壓重")
-                elif body / total_range < 0.1 and total_range / O > 0.005:
-                    candle_signals.append("➕ 十字轉折")
-            candle_txt = " / ".join(candle_signals)
-
-            pattern_txt = analyze_patterns(hist, ma60, ma200)
-            if candle_txt:
-                pattern_txt = pattern_txt + " / " + candle_txt if pattern_txt else candle_txt
+            # 計算乖離率 (20MA)
+            bias20 = ((current_price - ma20) / ma20) * 100
+            bias_text = f" | 乖離率: {bias20:+.1f}％"
+            if bias20 > 10:
+                bias_text += " ⚠️ 正乖離過大"
+            elif bias20 < -10:
+                bias_text += " 🔔 負乖離過大"
             
+            # 判斷 RSI 背離 (60天內)
+            rsi_div_signal = ""
+            if len(hist) >= 60:
+                recent_60_px = hist['Close'].tail(60)
+                recent_60_rsi = hist['RSI'].tail(60)
+                
+                past_px = recent_60_px.iloc[:30]
+                recent_px = recent_60_px.iloc[30:]
+                past_rsi = recent_60_rsi.iloc[:30]
+                recent_rsi = recent_60_rsi.iloc[30:]
+                
+                past_high_idx = past_px.idxmax()
+                recent_high_idx = recent_px.idxmax()
+                
+                if recent_px.max() > past_px.max():
+                    if recent_rsi.loc[recent_high_idx] < past_rsi.loc[past_high_idx] - 5:
+                        if current_price >= recent_px.max() * 0.98:
+                            rsi_div_signal = " ⚠️ RSI頂背離"
+                            
+                past_low_idx = past_px.idxmin()
+                recent_low_idx = recent_px.idxmin()
+                
+                if recent_px.min() < past_px.min():
+                    if recent_rsi.loc[recent_low_idx] > past_rsi.loc[past_low_idx] + 5:
+                        if current_price <= recent_px.min() * 1.02:
+                            rsi_div_signal = " 🔔 RSI底背離"
+                
             crypto_fng = ""
             if ticker == "BTC-USD":
                 fng_str = get_crypto_fng()
@@ -414,8 +305,7 @@ def get_market_data():
                 "目前價格": f"{current_price:.2f}",
                 "漲跌幅": f"{pct_change:+.2f}%",
                 "趨勢": trend,
-                "指標": f"RSI: {rsi:.1f}{special_signal}{crossover_signal}",
-                "型態": pattern_txt,
+                "指標": f"RSI: {rsi:.1f}{rsi_div_signal}{special_signal}{crossover_signal}{bias_text}",
                 "extra": crypto_fng
             })
         except Exception as e:
@@ -424,7 +314,7 @@ def get_market_data():
     return results, sp500_rsi, gold_price, silver_price
 
 def get_breadth_data():
-    logging.info("正在計算 S5FI 市場寬度指標...")
+    logging.info("正在計算 S5FI 市場寬度指標與背離訊號...")
     s5fi_val = None
     
     def get_wiki_tickers(url, col_name):
@@ -453,25 +343,74 @@ def get_breadth_data():
             logging.error(f"Failed to fetch tickers: {e}")
             return []
 
-    # 計算 S5FI (標普500成分股中，站上50MA的比例)
+    # 計算 S5FI (標普500成分股中，站上50MA的比例) 與背離訊號
     sp500_tickers = get_wiki_tickers('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies', 'symbol')
+    divergence_signal = None
     if sp500_tickers:
         try:
             data = yf.download(sp500_tickers, period='6mo', threads=True, progress=False)
             if 'Close' in data:
                 close_px = data['Close']
                 ma50 = close_px.rolling(window=50).mean()
-                latest_px = close_px.iloc[-1]
-                latest_ma50 = ma50.iloc[-1]
                 
-                above_50 = (latest_px > latest_ma50).sum()
-                total_valid = latest_px.notna().sum()
-                if total_valid > 0:
-                    s5fi_val = round((above_50 / total_valid) * 100, 2)
+                # 歷史 S5FI 序列
+                above_50_history = (close_px > ma50).sum(axis=1)
+                total_valid_history = close_px.notna().sum(axis=1)
+                s5fi_history = (above_50_history / total_valid_history) * 100
+                
+                if not s5fi_history.empty and not pd.isna(s5fi_history.iloc[-1]):
+                    s5fi_val = round(s5fi_history.iloc[-1], 2)
+                    
+                # 獲取大盤歷史資料進行背離比對
+                sp500_idx = yf.Ticker('^GSPC').history(period='6mo')['Close']
+                s5fi_history = s5fi_history.reindex(sp500_idx.index).dropna()
+                sp500_idx = sp500_idx.reindex(s5fi_history.index)
+                
+                if len(s5fi_history) >= 60:
+                    # 平滑處理減少雜訊
+                    s5fi_smooth = s5fi_history.rolling(window=3).mean().fillna(s5fi_history)
+                    
+                    recent_60_sp = sp500_idx.tail(60)
+                    recent_60_s5fi = s5fi_smooth.tail(60)
+                    
+                    past_sp = recent_60_sp.iloc[:30]
+                    recent_sp = recent_60_sp.iloc[30:]
+                    past_s5fi = recent_60_s5fi.iloc[:30]
+                    recent_s5fi = recent_60_s5fi.iloc[30:]
+                    
+                    past_high_idx = past_sp.idxmax()
+                    recent_high_idx = recent_sp.idxmax()
+                    past_high_val = past_sp.max()
+                    recent_high_val = recent_sp.max()
+                    
+                    s5fi_at_past_high = past_s5fi.loc[past_high_idx]
+                    s5fi_at_recent_high = recent_s5fi.loc[recent_high_idx]
+                    current_idx_val = sp500_idx.iloc[-1]
+                    
+                    # 頂部背離 (Top Divergence)
+                    if recent_high_val > past_high_val:
+                        if s5fi_at_recent_high < s5fi_at_past_high - 10:
+                            if current_idx_val >= recent_high_val * 0.98:
+                                divergence_signal = "🔴 頂部背離 (指數創新高，S5FI 未過前高，上漲動能衰退)"
+                                
+                    # 底部背離 (Bottom Divergence)
+                    past_low_idx = past_sp.idxmin()
+                    recent_low_idx = recent_sp.idxmin()
+                    past_low_val = past_sp.min()
+                    recent_low_val = recent_sp.min()
+                    
+                    s5fi_at_past_low = past_s5fi.loc[past_low_idx]
+                    s5fi_at_recent_low = recent_s5fi.loc[recent_low_idx]
+                    
+                    if recent_low_val < past_low_val:
+                        if s5fi_at_recent_low > s5fi_at_past_low + 10:
+                            if current_idx_val <= recent_low_val * 1.02:
+                                divergence_signal = "🟢 底部背離 (指數創新低，S5FI 低點抬高，下跌動能枯竭)"
+                                
         except Exception as e:
             logging.error(f"S5FI Error: {e}")
 
-    return s5fi_val
+    return s5fi_val, divergence_signal
 
 def get_pcr_5ma():
     logging.info("正在計算 CBOE Put/Call Ratio 5日均線...")
@@ -504,7 +443,7 @@ def get_pcr_5ma():
 # ==========================================
 # 4. 極端訊號模組 (Extreme Signals)
 # ==========================================
-def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
+def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma, s5fi_div=None):
     logging.info("正在檢查極端情緒與指標訊號...")
     signals = []
     buy_count = 0
@@ -565,7 +504,15 @@ def get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma):
             sell_count += 1
         else:
             status = "⚪ 中性"
-        signals.append(f"4. 標普 S5FI: {s5fi_val:.1f}% / 門檻小於10%或大於85% [{status}]")
+            
+        s5fi_msg = f"4. 標普 S5FI: {s5fi_val:.1f}% / 門檻小於10%或大於85% [{status}]"
+        if s5fi_div:
+            s5fi_msg += f"\n   ➤ ⚠️ {s5fi_div}"
+            if "買入" in s5fi_div or "買訊" in s5fi_div or "底部背離" in s5fi_div:
+                buy_count += 1
+            elif "賣出" in s5fi_div or "賣訊" in s5fi_div or "頂部背離" in s5fi_div:
+                sell_count += 1
+        signals.append(s5fi_msg)
     else:
         signals.append("4. 標普 S5FI: 擷取失敗")
 
@@ -625,15 +572,13 @@ def format_telegram_message(market_data, macro_data, extreme_signals, buy_count,
         msg += f"- {sig}\n"
     msg += "\n"
 
-    # 全球行情與型態
+    # 全球行情
     msg += "<b>🎯 =【全球核心板塊巡禮】=</b>\n"
     for item in market_data:
         msg += f"<b>{item['名稱']}</b> ({item['代碼']})\n"
         msg += f"   ➤ 價格: {item['目前價格']} ({item['漲跌幅']})\n"
         msg += f"   ➤ 趨勢: {item['趨勢']}\n"
         msg += f"   ➤ 指標: {item['指標']}" + item.get("extra", "") + "\n"
-        if item.get("型態"):
-            msg += f"   ➤ 型態: {item['型態']}\n"
         msg += f"   ---\n"
         
     msg += "<i>💡 提示: 中長線投資首重總經，機器人波段判讀僅為技術面輔助。</i>"
@@ -673,9 +618,9 @@ def main():
         except:
             sp500_rsi = None
             
-        s5fi_val = get_breadth_data()
+        s5fi_val, s5fi_div = get_breadth_data()
         pcr_5ma = get_pcr_5ma()
-        extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma)
+        extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma, s5fi_div)
         
         if buy_count >= 1:
             urgent_msg = "🚨🚨🚨 <b>【盤中緊急通知：極端超賣訊號觸發】</b> 🚨🚨🚨\n"
@@ -725,9 +670,9 @@ def main():
         except:
             pass
 
-    s5fi_val = get_breadth_data()
+    s5fi_val, s5fi_div = get_breadth_data()
     pcr_5ma = get_pcr_5ma()
-    extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma)
+    extreme_signals, buy_count, sell_count = get_extreme_signals(sp500_rsi, s5fi_val, pcr_5ma, s5fi_div)
     msg = format_telegram_message(market_data, macro_data, extreme_signals, buy_count, sell_count)
     
     # 判斷是否需要發送緊急獨立通知 (日報附帶)
